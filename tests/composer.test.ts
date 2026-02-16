@@ -421,6 +421,329 @@ describe("Composer", () => {
 			await app.run({ type: "any" });
 			expect(nextCalled).toBe(true);
 		});
+
+		// ─── Enhanced route() ───
+
+		it("undefined from router triggers fallback", async () => {
+			const calls: string[] = [];
+
+			const app = new Composer<{ type?: string }>().route(
+				(ctx) => ctx.type,
+				{
+					a: (_, next) => {
+						calls.push("a");
+						return next();
+					},
+				},
+				(_, next) => {
+					calls.push("fallback");
+					return next();
+				},
+			);
+
+			await app.run({ type: undefined });
+			expect(calls).toEqual(["fallback"]);
+		});
+
+		it("undefined from router with no fallback calls next()", async () => {
+			let nextCalled = false;
+
+			const app = new Composer<{ type?: string }>()
+				.route((ctx) => ctx.type, {})
+				.use((_, next) => {
+					nextCalled = true;
+					return next();
+				});
+
+			await app.run({ type: undefined });
+			expect(nextCalled).toBe(true);
+		});
+
+		it("array of middleware as route case", async () => {
+			const calls: string[] = [];
+
+			const app = new Composer<{ type: string }>().route(
+				(ctx) => ctx.type,
+				{
+					a: [
+						(_, next) => {
+							calls.push("mw1");
+							return next();
+						},
+						(_, next) => {
+							calls.push("mw2");
+							return next();
+						},
+					],
+				},
+			);
+
+			await app.run({ type: "a" });
+			expect(calls).toEqual(["mw1", "mw2"]);
+		});
+
+		it("Composer instance as route case", async () => {
+			const calls: string[] = [];
+
+			const handler = new Composer<{ type: string }>()
+				.use((_, next) => {
+					calls.push("c1");
+					return next();
+				})
+				.use((_, next) => {
+					calls.push("c2");
+					return next();
+				});
+
+			const app = new Composer<{ type: string }>().route(
+				(ctx) => ctx.type,
+				{ a: handler },
+			);
+
+			await app.run({ type: "a" });
+			expect(calls).toEqual(["c1", "c2"]);
+		});
+
+		it("builder: route.on() registers handler", async () => {
+			const calls: string[] = [];
+
+			const app = new Composer<{ type: string }>().route(
+				(ctx) => ctx.type,
+				(route) => {
+					route.on("a", (_, next) => {
+						calls.push("a");
+						return next();
+					});
+					route.on("b", (_, next) => {
+						calls.push("b");
+						return next();
+					});
+				},
+			);
+
+			await app.run({ type: "a" });
+			expect(calls).toEqual(["a"]);
+
+			calls.length = 0;
+			await app.run({ type: "b" });
+			expect(calls).toEqual(["b"]);
+		});
+
+		it("builder: route.on() returns Composer for chaining", async () => {
+			const calls: string[] = [];
+
+			const app = new Composer<{ type: string }>().route(
+				(ctx) => ctx.type,
+				(route) => {
+					route
+						.on("a")
+						.use((_, next) => {
+							calls.push("chained");
+							return next();
+						});
+				},
+			);
+
+			await app.run({ type: "a" });
+			expect(calls).toEqual(["chained"]);
+		});
+
+		it("builder: derive inside route case with full types", async () => {
+			let derivedValue: number | undefined;
+
+			const app = new Composer<{ type: string; text: string }>().route(
+				(ctx) => ctx.type,
+				(route) => {
+					route
+						.on("a")
+						.derive((ctx) => ({ parsed: ctx.text.length }))
+						.use((ctx, next) => {
+							derivedValue = (ctx as any).parsed;
+							return next();
+						});
+				},
+			);
+
+			await app.run({ type: "a", text: "hello" });
+			expect(derivedValue).toBe(5);
+		});
+
+		it("builder: route.otherwise() fallback", async () => {
+			const calls: string[] = [];
+
+			const app = new Composer<{ type: string }>().route(
+				(ctx) => ctx.type,
+				(route) => {
+					route.on("a", (_, next) => {
+						calls.push("a");
+						return next();
+					});
+					route.otherwise((_, next) => {
+						calls.push("otherwise");
+						return next();
+					});
+				},
+			);
+
+			await app.run({ type: "unknown" });
+			expect(calls).toEqual(["otherwise"]);
+		});
+
+		it("builder: undefined from router triggers otherwise", async () => {
+			const calls: string[] = [];
+
+			const app = new Composer<{ type?: string }>().route(
+				(ctx) => ctx.type,
+				(route) => {
+					route.otherwise((_, next) => {
+						calls.push("otherwise");
+						return next();
+					});
+				},
+			);
+
+			await app.run({ type: undefined });
+			expect(calls).toEqual(["otherwise"]);
+		});
+
+		it("builder: no match and no otherwise calls next()", async () => {
+			let nextCalled = false;
+
+			const app = new Composer<{ type: string }>()
+				.route(
+					(ctx) => ctx.type,
+					(route) => {
+						route.on("a", (_, next) => next());
+					},
+				)
+				.use((_, next) => {
+					nextCalled = true;
+					return next();
+				});
+
+			await app.run({ type: "unknown" });
+			expect(nextCalled).toBe(true);
+		});
+
+		it("builder: errors propagate to parent onError", async () => {
+			let caughtError: unknown;
+
+			const app = new Composer<{ type: string }>()
+				.onError(({ error }) => {
+					caughtError = error;
+					return true;
+				})
+				.route(
+					(ctx) => ctx.type,
+					(route) => {
+						route.on("a").use(() => {
+							throw new Error("builder error");
+						});
+					},
+				);
+
+			await app.run({ type: "a" });
+			expect(caughtError).toBeInstanceOf(Error);
+			expect((caughtError as Error).message).toBe("builder error");
+		});
+
+		it("array as fallback", async () => {
+			const calls: string[] = [];
+
+			const app = new Composer<{ type: string }>().route(
+				(ctx) => ctx.type,
+				{},
+				[
+					(_, next) => {
+						calls.push("fb1");
+						return next();
+					},
+					(_, next) => {
+						calls.push("fb2");
+						return next();
+					},
+				],
+			);
+
+			await app.run({ type: "unknown" });
+			expect(calls).toEqual(["fb1", "fb2"]);
+		});
+
+		it("Composer as fallback", async () => {
+			const calls: string[] = [];
+
+			const fb = new Composer().use((_, next) => {
+				calls.push("fb-composed");
+				return next();
+			});
+
+			const app = new Composer<{ type: string }>().route(
+				(ctx) => ctx.type,
+				{},
+				fb,
+			);
+
+			await app.run({ type: "unknown" });
+			expect(calls).toEqual(["fb-composed"]);
+		});
+
+		it("mixed case types: middleware, array, Composer", async () => {
+			const calls: string[] = [];
+
+			const composerCase = new Composer<{ type: string }>().use(
+				(_, next) => {
+					calls.push("composer");
+					return next();
+				},
+			);
+
+			const app = new Composer<{ type: string }>().route(
+				(ctx) => ctx.type,
+				{
+					plain: (_, next) => {
+						calls.push("plain");
+						return next();
+					},
+					arr: [
+						(_, next) => {
+							calls.push("arr");
+							return next();
+						},
+					],
+					comp: composerCase,
+				},
+			);
+
+			await app.run({ type: "plain" });
+			expect(calls).toEqual(["plain"]);
+
+			calls.length = 0;
+			await app.run({ type: "arr" });
+			expect(calls).toEqual(["arr"]);
+
+			calls.length = 0;
+			await app.run({ type: "comp" });
+			expect(calls).toEqual(["composer"]);
+		});
+
+		it("errors from Composer case propagate to parent onError", async () => {
+			let caughtError: unknown;
+
+			const app = new Composer<{ type: string }>()
+				.onError(({ error }) => {
+					caughtError = error;
+					return true;
+				})
+				.route((ctx) => ctx.type, {
+					a: new Composer().use(() => {
+						throw new Error("case error");
+					}),
+				});
+
+			await app.run({ type: "a" });
+			expect(caughtError).toBeInstanceOf(Error);
+			expect((caughtError as Error).message).toBe("case error");
+		});
 	});
 
 	// ─── fork() ───

@@ -68,6 +68,18 @@ interface ComposerOptions {
   name?: string;
   seed?: unknown;
 }
+
+/** Route handler: single middleware, array, or Composer instance */
+type RouteHandler<T extends object> =
+  | Middleware<T>
+  | Middleware<T>[]
+  | Composer<any, any, any>;
+
+/** Route builder for the builder-callback overload of route() */
+interface RouteBuilder<T extends object, K extends string> {
+  on(key: K, ...middleware: Middleware<T>[]): Composer<T, T, {}>;
+  otherwise(...middleware: Middleware<T>[]): void;
+}
 ```
 
 ---
@@ -220,19 +232,55 @@ branch(
 - If predicate is `false` (or function returns false) → run `onFalse` (or call `next()`)
 - **Static boolean optimization:** if predicate is a literal boolean, resolve at registration time (no runtime check)
 
-#### `route(router, cases, fallback?)`
+#### `route(router, cases, fallback?)` — record mode
 
 ```typescript
 route<K extends string>(
-  router: (context: TOut) => K | Promise<K>,
-  cases: Partial<Record<K, Middleware<TOut>>>,
-  fallback?: Middleware<TOut>
+  router: (context: TOut) => K | undefined | Promise<K | undefined>,
+  cases: Partial<Record<K, Middleware<TOut> | Middleware<TOut>[] | Composer<any, any, any>>>,
+  fallback?: Middleware<TOut> | Middleware<TOut>[] | Composer<any, any, any>
 ): Composer<TIn, TOut, TExposed>
 ```
 
 - Calls `router(context)` to get a key
+- Router may return `undefined` — treated as "no route" (triggers fallback or `next()`)
 - Runs `cases[key]` if exists, otherwise `fallback`, otherwise `next()`
 - Multi-way dispatch (like a switch statement)
+
+**Case values** can be:
+- `Middleware<TOut>` — single middleware function
+- `Middleware<TOut>[]` — array of middleware (composed into one chain)
+- `Composer<any>` — Composer instance (compiled to raw middleware; errors propagate to parent)
+
+Fallback accepts the same types.
+
+#### `route(router, builder)` — builder mode
+
+```typescript
+route<K extends string>(
+  router: (context: TOut) => K | undefined | Promise<K | undefined>,
+  builder: (route: RouteBuilder<TOut, K>) => void
+): Composer<TIn, TOut, TExposed>
+```
+
+Builder callback receives a `RouteBuilder` with:
+
+```typescript
+interface RouteBuilder<T extends object, K extends string> {
+  /** Register a route. Returns a pre-typed Composer for chaining. */
+  on(key: K, ...middleware: Middleware<T>[]): Composer<T, T, {}>;
+  /** Fallback when router returns undefined or key has no handler */
+  otherwise(...middleware: Middleware<T>[]): void;
+}
+```
+
+- `route.on(key)` returns a **pre-typed Composer** — chain `.derive()`, `.use()`, `.guard()`, etc.
+- `route.on(key, ...middleware)` registers middleware directly AND returns the Composer for further chaining
+- `route.otherwise(...)` sets the fallback handler
+- Builder callback executes at **registration time** (not per-request)
+- Errors from route handlers propagate to the parent's `onError`
+
+**Builder mode is preferred** when route handlers need `derive()` or complex middleware chains, because the Composer inherits the parent's context types automatically.
 
 #### `fork(...middleware)`
 
@@ -627,7 +675,7 @@ const stop: Middleware<any>;
 ```typescript
 // Core
 export { compose } from "./compose";
-export { Composer } from "./composer";
+export { Composer, type RouteHandler, type RouteBuilder } from "./composer";
 export { createComposer } from "./factory";
 export { EventQueue } from "./queue";
 

@@ -29,6 +29,7 @@ src/
 - **`_` / `"~"` internals** — all internal state lives on `_` object, `"~"` is alias. Access via `composer["~"].middlewares` etc. Pushes internals to end of IDE autocomplete
 - **Event-specific derive** — EventComposer supports `derive(event, handler)` for per-event context enrichment
 - **Error system (Elysia-style)** — `error(kind, class)` registers error kinds, `onError(handler)` pushes to `["~"].onErrors` array. On error: handlers iterated in order, first to return non-undefined wins, unhandled errors logged via `console.error` (no re-throw, no crash). `extend()` merges both `errorsDefinitions` and `onErrors`. Handler receives `{ error, context, kind? }` where `kind` is resolved via `instanceof` against registered classes
+- **route() dual mode** — record mode (`cases` object) for simple dispatch; builder mode (`(route) => { route.on(...) }`) for composable routes with derive/guard per case. Router function may return `undefined` (→ fallback). Record mode accepts `Middleware`, `Middleware[]`, or `Composer` as case values. Builder's `route.on(key)` returns a pre-typed Composer.
 
 ## Commands
 

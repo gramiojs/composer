@@ -12,6 +12,37 @@ import type {
 	ScopedMiddleware,
 } from "./types.ts";
 
+/** Route handler: single middleware, array, or Composer instance */
+export type RouteHandler<T extends object> =
+	| Middleware<T>
+	| Middleware<T>[]
+	| Composer<any, any, any>;
+
+/** Route builder passed to the builder-callback overload of route() */
+export interface RouteBuilder<T extends object, K extends string> {
+	/** Register a route. Returns a pre-typed Composer for chaining derive/use/guard etc. */
+	on(key: K, ...middleware: Middleware<T>[]): Composer<T, T, {}>;
+	/** Fallback when router returns undefined or key has no handler */
+	otherwise(...middleware: Middleware<T>[]): void;
+}
+
+/**
+ * Resolves a route handler value to a plain Middleware at registration time.
+ * Errors from resolved handlers propagate to the parent (no local error wrapping).
+ */
+function resolveRouteHandler(handler: unknown): Middleware<any> {
+	// Composer instance → compile raw chain (errors propagate to parent)
+	if (handler instanceof Composer) {
+		return compose(handler["~"].middlewares.map((m) => m.fn));
+	}
+	// Array of middleware → compose into one
+	if (Array.isArray(handler)) {
+		return compose(handler);
+	}
+	// Plain middleware function
+	return handler as Middleware<any>;
+}
+
 export class Composer<
 	TIn extends object = {},
 	TOut extends TIn = TIn,
@@ -132,18 +163,70 @@ export class Composer<
 		return this;
 	}
 
+	// Overload 1: builder callback — (route) => { route.on("key").derive(...).use(...) }
 	route<K extends string>(
-		router: (context: TOut) => K | Promise<K>,
-		cases: Partial<Record<K, Middleware<TOut>>>,
-		fallback?: Middleware<TOut>,
+		router: (context: TOut) => K | undefined | Promise<K | undefined>,
+		builder: (route: RouteBuilder<TOut, K>) => void,
+	): Composer<TIn, TOut, TExposed>;
+	// Overload 2: handler record — Middleware, array, or Composer instance
+	route<K extends string>(
+		router: (context: TOut) => K | undefined | Promise<K | undefined>,
+		cases: Partial<Record<K, Middleware<TOut> | Middleware<TOut>[] | Composer<any, any, any>>>,
+		fallback?: Middleware<TOut> | Middleware<TOut>[] | Composer<any, any, any>,
+	): Composer<TIn, TOut, TExposed>;
+	route<K extends string>(
+		router: (context: TOut) => K | undefined | Promise<K | undefined>,
+		casesOrBuilder: Partial<Record<K, unknown>> | ((route: RouteBuilder<any, any>) => void),
+		fallback?: unknown,
 	): Composer<TIn, TOut, TExposed> {
+		let resolvedCases: Record<string, Middleware<any>>;
+		let resolvedFallback: Middleware<any> | undefined;
+
+		if (typeof casesOrBuilder === "function") {
+			// Builder mode
+			resolvedCases = {};
+			const composers = new Map<string, Composer<any, any, any>>();
+			let otherwiseMws: Middleware<any>[] = [];
+
+			const routeBuilder: RouteBuilder<any, any> = {
+				on: (key: string, ...middleware: Middleware<any>[]) => {
+					const c = new Composer();
+					if (middleware.length > 0) c.use(...middleware);
+					composers.set(key, c);
+					return c;
+				},
+				otherwise: (...middleware: Middleware<any>[]) => {
+					otherwiseMws = middleware;
+				},
+			};
+
+			casesOrBuilder(routeBuilder);
+
+			// Compile all registered composers
+			for (const [key, c] of composers) {
+				resolvedCases[key] = compose(c["~"].middlewares.map((m) => m.fn));
+			}
+			resolvedFallback =
+				otherwiseMws.length > 0 ? compose(otherwiseMws) : undefined;
+		} else {
+			// Record mode
+			resolvedCases = {};
+			for (const [key, handler] of Object.entries(casesOrBuilder)) {
+				if (handler != null) {
+					resolvedCases[key] = resolveRouteHandler(handler);
+				}
+			}
+			resolvedFallback =
+				fallback != null ? resolveRouteHandler(fallback) : undefined;
+		}
+
 		const mw: Middleware<any> = async (ctx, next) => {
 			const key = await router(ctx);
-			const handler = (cases as Record<string, Middleware<any>>)[key];
-			if (handler) {
-				return handler(ctx, next);
+			if (key != null) {
+				const caseHandler = resolvedCases[key as string];
+				if (caseHandler) return caseHandler(ctx, next);
 			}
-			return fallback ? fallback(ctx, next) : next();
+			return resolvedFallback ? resolvedFallback(ctx, next) : next();
 		};
 		this["~"].middlewares.push({ fn: mw, scope: "local" });
 		this.invalidate();

@@ -1,5 +1,5 @@
 import { compose } from "./compose.ts";
-import { Composer } from "./composer.ts";
+import { Composer, type RouteBuilder } from "./composer.ts";
 import { EventQueue } from "./queue.ts";
 import type {
 	ComposedMiddleware,
@@ -77,9 +77,18 @@ export interface EventComposer<
 	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
 
 	route<K extends string>(
-		router: (context: TOut) => K | Promise<K>,
-		cases: Partial<Record<K, Middleware<TOut>>>,
-		fallback?: Middleware<TOut>,
+		router: (context: TOut) => K | undefined | Promise<K | undefined>,
+		cases: Partial<Record<K, (composer: Composer<TOut, TOut, {}>) => Composer<any, any, any>>>,
+		fallback?: (composer: Composer<TOut, TOut, {}>) => Composer<any, any, any>,
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
+	route<K extends string>(
+		router: (context: TOut) => K | undefined | Promise<K | undefined>,
+		builder: (route: RouteBuilder<TOut, K>) => void,
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
+	route<K extends string>(
+		router: (context: TOut) => K | undefined | Promise<K | undefined>,
+		cases: Partial<Record<K, Middleware<TOut> | Middleware<TOut>[] | Composer<any, any, any>>>,
+		fallback?: Middleware<TOut> | Middleware<TOut>[] | Composer<any, any, any>,
 	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
 
 	fork(
