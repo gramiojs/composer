@@ -4,6 +4,9 @@ export type Next = () => Promise<unknown>;
 /** Middleware function: receives context and next */
 export type Middleware<T> = (context: T, next: Next) => unknown;
 
+/** Composed middleware: next is optional (acts as terminal continuation) */
+export type ComposedMiddleware<T> = (context: T, next?: Next) => Promise<unknown>;
+
 /** Error handler receives context and the caught error */
 export type ErrorHandler<T> = (context: T, error: unknown) => unknown;
 

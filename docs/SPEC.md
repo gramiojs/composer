@@ -176,24 +176,30 @@ derive<D extends object>(
 - Same as above, but the derive is scoped
 - Both `TOut` AND `TExposed` grow by `& D`
 
-#### `filter(predicate, ...middleware)` — conditional with type narrowing
+#### `guard(predicate, ...middleware)` — conditional with type narrowing
 
 ```typescript
 // Overload 1: type predicate
-filter<S extends TOut>(
+guard<S extends TOut>(
   predicate: (context: TOut) => context is S,
   ...middleware: Middleware<S>[]
 ): Composer<TIn, TOut, TExposed>
 
 // Overload 2: boolean predicate
-filter(
+guard(
   predicate: (context: TOut) => boolean | Promise<boolean>,
   ...middleware: Middleware<TOut>[]
 ): Composer<TIn, TOut, TExposed>
 ```
 
+**With handlers** (side-effects mode):
 - If predicate returns true → run the given middleware, then call next
-- If predicate returns false → skip, call next immediately
+- If predicate returns false → skip middleware, call next immediately
+
+**Without handlers** (gate mode):
+- If predicate returns true → call next (continue chain)
+- If predicate returns false → stop (don't call next)
+
 - `TOut` and `TExposed` are unchanged
 
 #### `branch(predicate, onTrue, onFalse?)`
@@ -503,7 +509,7 @@ const app = new Composer()
 ### Extending EventComposer
 
 EventComposers created via factory support all base Composer methods:
-`derive()`, `filter()`, `branch()`, `route()`, `fork()`, `tap()`, `lazy()`,
+`derive()`, `guard()`, `branch()`, `route()`, `fork()`, `tap()`, `lazy()`,
 `onError()`, `group()`, `extend()`, `as()`, `compose()`, `run()`.
 
 When `.extend()`-ing another EventComposer, they must share the same factory
@@ -1098,8 +1104,9 @@ private createIsolatedMiddleware(middlewares: ScopedMiddleware[]): Middleware {
 - [ ] `compose()` — onion order (before/after next())
 - [ ] `Composer.use()` — registers middleware, runs in order
 - [ ] `Composer.derive()` — adds properties to context, types accumulate
-- [ ] `Composer.filter()` — runs middleware only when predicate is true
-- [ ] `Composer.filter()` — type narrowing with type predicate
+- [ ] `Composer.guard()` — with handlers: runs middleware only when predicate is true
+- [ ] `Composer.guard()` — without handlers: gates the chain (false → stop)
+- [ ] `Composer.guard()` — type narrowing with type predicate
 - [ ] `Composer.branch()` — true/false branches
 - [ ] `Composer.branch()` — static boolean optimization
 - [ ] `Composer.route()` — dispatches to correct case

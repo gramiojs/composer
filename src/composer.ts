@@ -1,6 +1,7 @@
 import { compose } from "./compose.ts";
 import { noopNext } from "./utils.ts";
 import type {
+	ComposedMiddleware,
 	ComposerOptions,
 	DeriveHandler,
 	ErrorHandler,
@@ -21,7 +22,7 @@ export class Composer<
 	/** @internal */
 	_extended = new Set<string>();
 	/** @internal */
-	_compiled: Middleware<TIn> | null = null;
+	_compiled: ComposedMiddleware<TIn> | null = null;
 
 	readonly name: string | undefined;
 	readonly seed: unknown;
@@ -50,8 +51,15 @@ export class Composer<
 
 	derive<D extends object>(
 		handler: DeriveHandler<TOut, D>,
+	): Composer<TIn, TOut & D, TExposed>;
+	derive<D extends object>(
+		handler: DeriveHandler<TOut, D>,
+		options: { as: "scoped" | "global" },
+	): Composer<TIn, TOut & D, TExposed & D>;
+	derive<D extends object>(
+		handler: DeriveHandler<TOut, D>,
 		options?: { as: "scoped" | "global" },
-	): Composer<TIn, TOut & D, TExposed & (typeof options extends { as: string } ? D : {})> {
+	): Composer<TIn, TOut & D, TExposed & D> {
 		const mw: Middleware<any> = async (ctx, next) => {
 			const result = await handler(ctx);
 			Object.assign(ctx, result);
@@ -63,19 +71,34 @@ export class Composer<
 		return this as any;
 	}
 
-	filter<S extends TOut>(
+	guard<S extends TOut>(
 		predicate: ((context: TOut) => context is S) | ((context: TOut) => boolean | Promise<boolean>),
 		...middleware: Middleware<any>[]
 	): Composer<TIn, TOut, TExposed> {
-		const chain = compose(middleware);
-		const mw: Middleware<any> = async (ctx, next) => {
-			if (await predicate(ctx)) {
-				await chain(ctx, next);
-			} else {
+		const isGuard = middleware.length === 0;
+
+		if (isGuard) {
+			// Guard mode: no handlers → gate the chain
+			// true  → call next() (continue)
+			// false → don't call next() (stop this chain)
+			const mw: Middleware<any> = async (ctx, next) => {
+				if (await predicate(ctx)) return next();
+			};
+			this._middlewares.push({ fn: mw, scope: "local" });
+		} else {
+			// Handler mode: run middleware as side-effects, always continue
+			// true  → run handlers, then call next()
+			// false → call next()
+			const chain = compose(middleware);
+			const mw: Middleware<any> = async (ctx, next) => {
+				if (await predicate(ctx)) {
+					await chain(ctx, noopNext);
+				}
 				await next();
-			}
-		};
-		this._middlewares.push({ fn: mw, scope: "local" });
+			};
+			this._middlewares.push({ fn: mw, scope: "local" });
+		}
+
 		this.invalidate();
 		return this;
 	}
@@ -268,11 +291,11 @@ export class Composer<
 		return this as any;
 	}
 
-	compose(): Middleware<TIn> {
+	compose(): ComposedMiddleware<TIn> {
 		if (!this._compiled) {
 			this._compiled = compose(
 				this._middlewares.map((m) => m.fn),
-			) as Middleware<TIn>;
+			) as ComposedMiddleware<TIn>;
 		}
 		return this._compiled;
 	}

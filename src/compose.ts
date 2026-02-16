@@ -1,13 +1,13 @@
-import type { Middleware, Next } from "./types.ts";
+import type { ComposedMiddleware, Middleware, Next } from "./types.ts";
 
 /**
  * Compose an array of middleware functions into a single middleware.
  * Koa-style onion model: each middleware receives (context, next).
  */
-export function compose<T>(middlewares: Middleware<T>[]): Middleware<T> {
+export function compose<T>(middlewares: Middleware<T>[]): ComposedMiddleware<T> {
 	// Fast path: empty array
 	if (middlewares.length === 0) {
-		return (_, next) => (next ? next() : Promise.resolve());
+		return (_, next?) => (next ? next() : Promise.resolve());
 	}
 
 	return (context: T, next?: Next) => {

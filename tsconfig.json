@@ -10,10 +10,8 @@
 		"noFallthroughCasesInSwitch": true,
 		"declaration": true,
 		"forceConsistentCasingInFileNames": true,
-		"baseUrl": "./src",
-		"rootDir": "./src",
-		"outDir": "./dist",
+		"noEmit": true,
 		"allowImportingTsExtensions": true
 	},
-	"include": ["src"]
+	"include": ["src", "tests", "examples"]
 }

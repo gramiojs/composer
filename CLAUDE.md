@@ -25,6 +25,7 @@ src/
 - **Local isolation** uses `Object.create(ctx)` — prototype chain lets reads fall through, writes stay local
 - **Deduplication** by name + JSON.stringify(seed) with transitive inheritance of extended sets
 - **Lazy compilation** with dirty flag — compose() caches, any mutation invalidates
+- **guard() dual mode**: with handlers = side-effects (always continues); without handlers = gate (blocks chain if false)
 
 ## Commands
 
@@ -43,6 +44,7 @@ Tests live in `tests/` directory using `bun:test`. Test files mirror source stru
 - `factory.test.ts` — createComposer + EventComposer .on()
 - `queue.test.ts` — EventQueue
 - `utils.test.ts` — utility functions
+- `types.test.ts` — compile-time type assertions (verified via `bunx tsc --noEmit`)
 
 ## Rules
 

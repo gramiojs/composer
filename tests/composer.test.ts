@@ -111,13 +111,13 @@ describe("Composer", () => {
 		});
 	});
 
-	// ─── filter() ───
+	// ─── guard() ───
 
-	describe("filter()", () => {
+	describe("guard()", () => {
 		it("runs middleware only when predicate is true", async () => {
 			const calls: string[] = [];
 
-			const app = new Composer<{ pass: boolean }>().filter(
+			const app = new Composer<{ pass: boolean }>().guard(
 				(ctx) => ctx.pass,
 				(_, next) => {
 					calls.push("filtered");
@@ -137,7 +137,7 @@ describe("Composer", () => {
 			let afterCalled = false;
 
 			const app = new Composer<{ pass: boolean }>()
-				.filter(
+				.guard(
 					(ctx) => ctx.pass,
 					() => {},
 				)
@@ -150,10 +150,30 @@ describe("Composer", () => {
 			expect(afterCalled).toBe(true);
 		});
 
+		it("always calls next() after filtered middleware (can't block chain)", async () => {
+			const calls: string[] = [];
+
+			const app = new Composer<{ pass: boolean }>()
+				.guard(
+					(ctx) => ctx.pass,
+					() => {
+						calls.push("filtered");
+						// does NOT call next — but chain should continue anyway
+					},
+				)
+				.use((_, next) => {
+					calls.push("after");
+					return next();
+				});
+
+			await app.run({ pass: true });
+			expect(calls).toEqual(["filtered", "after"]);
+		});
+
 		it("async predicate works", async () => {
 			const calls: string[] = [];
 
-			const app = new Composer<{ pass: boolean }>().filter(
+			const app = new Composer<{ pass: boolean }>().guard(
 				async (ctx) => ctx.pass,
 				(_, next) => {
 					calls.push("filtered");
@@ -163,6 +183,66 @@ describe("Composer", () => {
 
 			await app.run({ pass: true });
 			expect(calls).toEqual(["filtered"]);
+		});
+
+		// ─── Guard mode (no handlers) ───
+
+		it("guard: no handlers + true → continues chain", async () => {
+			const calls: string[] = [];
+
+			const app = new Composer<{ pass: boolean }>()
+				.guard((ctx) => ctx.pass)
+				.use((_, next) => {
+					calls.push("after");
+					return next();
+				});
+
+			await app.run({ pass: true });
+			expect(calls).toEqual(["after"]);
+		});
+
+		it("guard: no handlers + false → stops chain", async () => {
+			const calls: string[] = [];
+
+			const app = new Composer<{ pass: boolean }>()
+				.guard((ctx) => ctx.pass)
+				.use((_, next) => {
+					calls.push("after");
+					return next();
+				});
+
+			await app.run({ pass: false });
+			expect(calls).toEqual([]);
+		});
+
+		it("guard: stops this composer but parent continues", async () => {
+			const calls: string[] = [];
+
+			// Inner composer with guard — stops when false
+			const guarded = new Composer<{ role: string }>()
+				.guard((ctx) => ctx.role === "admin")
+				.use((_, next) => {
+					calls.push("admin-only");
+					return next();
+				});
+
+			// Parent continues after the guarded child
+			const app = new Composer<{ role: string }>()
+				.extend(guarded)
+				.use((_, next) => {
+					calls.push("always");
+					return next();
+				});
+
+			// Admin passes guard
+			await app.run({ role: "admin" });
+			expect(calls).toEqual(["admin-only", "always"]);
+
+			calls.length = 0;
+
+			// Non-admin blocked by guard, but parent continues
+			await app.run({ role: "user" });
+			expect(calls).toEqual(["always"]);
 		});
 	});
 

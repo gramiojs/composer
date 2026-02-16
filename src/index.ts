@@ -8,6 +8,7 @@ export { EventQueue } from "./queue.ts";
 export type {
 	Next,
 	Middleware,
+	ComposedMiddleware,
 	ErrorHandler,
 	DeriveHandler,
 	LazyFactory,

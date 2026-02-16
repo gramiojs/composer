@@ -106,15 +106,38 @@ const plugin = new Composer({ name: "auth" })
   .derive((ctx) => ({ user: getUser(ctx) }), { as: "scoped" });
 ```
 
-#### `filter(predicate, ...middleware)`
+#### `guard(predicate, ...middleware)`
 
-Run middleware only when predicate returns true.
+Two modes depending on whether handlers are provided:
+
+**With handlers** — run middleware as side-effects when true, always continue the chain:
 
 ```ts
-app.filter(
+app.guard(
   (ctx): ctx is WithText => "text" in ctx,
   (ctx, next) => { /* ctx.text is typed */ return next(); }
 );
+```
+
+**Without handlers** — gate the chain: if false, stop this composer's remaining middleware:
+
+```ts
+// Only admin can reach subsequent middleware
+app
+  .guard((ctx) => ctx.role === "admin")
+  .use(adminOnlyHandler);  // skipped if not admin
+```
+
+When used inside an `extend()`-ed plugin, the guard stops the plugin's chain but the parent continues:
+
+```ts
+const adminPlugin = new Composer()
+  .guard((ctx) => ctx.isAdmin)
+  .use(adminDashboard);          // skipped if not admin
+
+app
+  .extend(adminPlugin)  // guard inside, isolated
+  .use(alwaysRuns);     // parent continues regardless
 ```
 
 #### `branch(predicate, onTrue, onFalse?)`
