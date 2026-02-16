@@ -1,7 +1,7 @@
 {
-	"name": "@gramio/posthog",
-	"version": "0.0.2",
-	"description": "Posthog plugin for GramIO",
+	"name": "@gramio/composer",
+	"version": "0.1.0",
+	"description": "General-purpose, type-safe middleware composition library for TypeScript",
 	"main": "dist/index.cjs",
 	"module": "dist/index.js",
 	"types": "dist/index.d.ts",
@@ -20,30 +20,24 @@
 	"type": "module",
 	"author": "kravets",
 	"license": "MIT",
-	"readme": "https://gramio.dev/plugins/official/posthog",
-	"homepage": "https://github.com/gramiojs/posthog",
 	"keywords": [
 		"gramio",
-		"gramio-plugin",
-		"posthog",
-		"telegram",
-		"telegram-bot-api"
+		"middleware",
+		"composer",
+		"compose",
+		"koa",
+		"typescript"
 	],
 	"scripts": {
 		"prepublishOnly": "bunx pkgroll",
+		"test": "bun test",
 		"lint": "bunx @biomejs/biome check src",
 		"lint:fix": "bun lint --write"
-	},
-	"peerDependencies": {
-		"gramio": ">=0.0.39 <1.0.0",
-		"posthog-node": "^4.14.0"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^1.9.4",
 		"@types/bun": "^1.1.14",
-		"gramio": "^0.4.3",
 		"pkgroll": "^2.5.1",
-		"posthog-node": "^4.14.0",
 		"typescript": "^5.7.2"
 	},
 	"files": ["dist"]

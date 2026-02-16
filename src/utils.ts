@@ -1,55 +1,10 @@
-import type { Context } from "gramio";
-import type { PostHog } from "posthog-node";
+import type { Middleware, Next } from "./types.ts";
 
-export function extractFromContext(
-	context: Context<any>,
-	type: "chat_id" | "user_id",
-) {
-	if (type === "chat_id") {
-		const chatId =
-			"chat" in context &&
-			typeof context.chat === "object" &&
-			context.chat !== null &&
-			"id" in context.chat &&
-			typeof context.chat.id === "number"
-				? context.chat.id
-				: undefined;
+/** No-op next function: () => Promise.resolve() */
+export const noopNext: Next = () => Promise.resolve();
 
-		return chatId;
-	}
+/** Pass-through middleware: calls next() immediately */
+export const skip: Middleware<any> = (_, next) => next();
 
-	const senderId =
-		"from" in context &&
-		typeof context.from === "object" &&
-		context.from !== null &&
-		"id" in context.from &&
-		typeof context.from.id === "number"
-			? context.from.id
-			: undefined;
-
-	return senderId;
-}
-
-export type IsFeatureEnabledOptions = Parameters<
-	PostHog["isFeatureEnabled"]
->[2];
-
-export type GetFeatureFlagOptions = Parameters<PostHog["getFeatureFlag"]>[2];
-
-export type GetFeatureFlagPayloadValue = Parameters<
-	PostHog["getFeatureFlagPayload"]
->[2];
-
-export type GetFeatureFlagPayloadOptions = Parameters<
-	PostHog["getFeatureFlagPayload"]
->[3];
-
-export type GetAllFlagsOptions = Parameters<PostHog["getAllFlags"]>[1];
-
-export type GetAllFlagsPayloadOptions = Parameters<
-	PostHog["getAllFlagsAndPayloads"]
->[1];
-
-export type PostHogFlagsAndPayloadsResponse = Awaited<
-	ReturnType<PostHog["getAllFlagsAndPayloads"]>
->;
+/** Terminal middleware: does NOT call next() */
+export const stop: Middleware<any> = () => {};
