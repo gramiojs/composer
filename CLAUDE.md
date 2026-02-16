@@ -28,7 +28,7 @@ src/
 - **guard() dual mode**: with handlers = side-effects (always continues); without handlers = gate (blocks chain if false)
 - **`_` / `"~"` internals** — all internal state lives on `_` object, `"~"` is alias. Access via `composer["~"].middlewares` etc. Pushes internals to end of IDE autocomplete
 - **Event-specific derive** — EventComposer supports `derive(event, handler)` for per-event context enrichment
-- **Error registration** — `error(kind, class)` stores error definitions in `["~"].errorsDefinitions`, merged on extend
+- **Error system (Elysia-style)** — `error(kind, class)` registers error kinds, `onError(handler)` pushes to `["~"].onErrors` array. On error: handlers iterated in order, first to return non-undefined wins, unhandled errors logged via `console.error` (no re-throw, no crash). `extend()` merges both `errorsDefinitions` and `onErrors`. Handler receives `{ error, context, kind? }` where `kind` is resolved via `instanceof` against registered classes
 
 ## Commands
 
@@ -55,3 +55,4 @@ Tests live in `tests/` directory using `bun:test`. Test files mirror source stru
 - No Node.js-specific APIs (no `setImmediate`, no `process.*`) — cross-runtime
 - ESM-first, target ES2022+
 - Use `.ts` extensions in imports (for Deno compat)
+- **Always update CLAUDE.md and docs/SPEC.md** when changing API, behavior, or architecture

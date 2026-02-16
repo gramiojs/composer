@@ -19,6 +19,7 @@ export class Composer<
 > {
 	"~" = {
 		middlewares: [] as ScopedMiddleware<any>[],
+		onErrors: [] as ErrorHandler<any>[],
 		extended: new Set<string>(),
 		compiled: null as ComposedMiddleware<any> | null,
 		name: undefined as string | undefined,
@@ -199,21 +200,7 @@ export class Composer<
 	onError(
 		handler: ErrorHandler<TOut>,
 	): Composer<TIn, TOut, TExposed> {
-		const mw: Middleware<any> = async (ctx, next) => {
-			try {
-				return await next();
-			} catch (error) {
-				let kind: string | undefined;
-				for (const [k, ErrorClass] of Object.entries(this["~"].errorsDefinitions)) {
-					if (error instanceof ErrorClass) {
-						kind = k;
-						break;
-					}
-				}
-				return handler({ error, context: ctx, kind });
-			}
-		};
-		this["~"].middlewares.push({ fn: mw, scope: "local" });
+		this["~"].onErrors.push(handler);
 		this.invalidate();
 		return this;
 	}
@@ -274,8 +261,9 @@ export class Composer<
 			this["~"].extended.add(key);
 		}
 
-		// 3. Merge error definitions
+		// 3. Merge error definitions and error handlers
 		Object.assign(this["~"].errorsDefinitions, other["~"].errorsDefinitions);
+		this["~"].onErrors.push(...other["~"].onErrors);
 
 		// 4. Process other's middleware by scope
 		const localMws = other["~"].middlewares.filter((m) => m.scope === "local");
@@ -309,9 +297,30 @@ export class Composer<
 
 	compose(): ComposedMiddleware<TIn> {
 		if (!this["~"].compiled) {
-			this["~"].compiled = compose(
+			const chain = compose(
 				this["~"].middlewares.map((m) => m.fn),
-			) as ComposedMiddleware<any>;
+			);
+			const onErrors = this["~"].onErrors;
+			const errorsDefinitions = this["~"].errorsDefinitions;
+
+			this["~"].compiled = (async (ctx: any, next?: Next) => {
+				try {
+					return await chain(ctx, next);
+				} catch (error) {
+					let kind: string | undefined;
+					for (const [k, ErrorClass] of Object.entries(errorsDefinitions)) {
+						if (error instanceof ErrorClass) {
+							kind = k;
+							break;
+						}
+					}
+					for (const handler of onErrors) {
+						const result = await handler({ error, context: ctx, kind });
+						if (result !== undefined) return result;
+					}
+					console.error("[composer] Unhandled error:", error);
+				}
+			}) as ComposedMiddleware<any>;
 		}
 		return this["~"].compiled as ComposedMiddleware<TIn>;
 	}

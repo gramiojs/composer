@@ -38,8 +38,12 @@ type Next = () => Promise<unknown>;
 /** Middleware function: receives context and next */
 type Middleware<T> = (context: T, next: Next) => unknown;
 
-/** Error handler receives context and the caught error */
-type ErrorHandler<T> = (context: T, error: unknown) => unknown;
+/** Error handler receives an object with error, context, and resolved kind */
+type ErrorHandler<T> = (params: {
+  error: unknown;
+  context: T;
+  kind?: string;
+}) => unknown;
 
 /** Function that computes additional context properties */
 type DeriveHandler<T, D> = (context: T) => D | Promise<D>;
@@ -266,10 +270,15 @@ lazy(factory: LazyFactory<TOut>): Composer<TIn, TOut, TExposed>
 onError(handler: ErrorHandler<TOut>): Composer<TIn, TOut, TExposed>
 ```
 
-- Creates an error boundary: wraps all SUBSEQUENT middleware in try/catch
-- On error: calls `handler(context, error)`
-- Handler can re-throw to propagate, or swallow to continue
-- Multiple `onError()` calls create nested boundaries
+- Pushes handler to `["~"].onErrors` array (NOT into the middleware chain)
+- At `compose()` time, the entire middleware chain is wrapped in a single try/catch
+- On error:
+  1. Resolves `kind` by matching error against `["~"].errorsDefinitions` via `instanceof`
+  2. Iterates handlers in registration order, calling `handler({ error, context, kind })`
+  3. First handler to return non-`undefined` wins — error is considered handled
+  4. If no handler returns a value → `console.error("[composer] Unhandled error:", error)` (no re-throw)
+- Multiple `onError()` calls add to the array (Elysia-style chain, not nested boundaries)
+- `extend()` merges error handlers from child to parent
 
 ### 3.2 Scope System
 
@@ -820,9 +829,9 @@ const app = new Composer()
     return next();
   })
 
-  // Error boundary
-  .onError((ctx, error) => {
-    console.error(`Error in ${ctx.updateType}:`, error);
+  // Error handler — logs all errors (returns undefined → passes to next handler)
+  .onError(({ context, error }) => {
+    console.error(`Error in ${context.updateType}:`, error);
   });
 
 // === Process events ===
@@ -980,15 +989,30 @@ class Composer {
 
   compose() {
     if (!this._compiled) {
-      this._compiled = this.build();
+      const chain = compose(this.middlewares.map(m => m.fn));
+      const onErrors = this.onErrors;
+      const errorsDefinitions = this.errorsDefinitions;
+
+      this._compiled = async (ctx, next?) => {
+        try {
+          return await chain(ctx, next);
+        } catch (error) {
+          // Resolve kind via instanceof against registered error classes
+          let kind: string | undefined;
+          for (const [k, ErrorClass] of Object.entries(errorsDefinitions)) {
+            if (error instanceof ErrorClass) { kind = k; break; }
+          }
+          // Iterate handlers — first to return non-undefined wins
+          for (const handler of onErrors) {
+            const result = await handler({ error, context: ctx, kind });
+            if (result !== undefined) return result;
+          }
+          // Default: log, don't re-throw (no process crash)
+          console.error("[composer] Unhandled error:", error);
+        }
+      };
     }
     return this._compiled;
-  }
-
-  private build(): Middleware<TIn> {
-    // Collect all middleware functions in order
-    // Apply scope isolation where needed
-    // Call compose() on the flat array
   }
 }
 ```
@@ -1029,7 +1053,11 @@ extend(other) {
     this.extended.add(key);
   }
 
-  // 3. Process other's middleware by scope
+  // 3. Merge error definitions and error handlers
+  Object.assign(this.errorsDefinitions, other.errorsDefinitions);
+  this.onErrors.push(...other.onErrors);
+
+  // 4. Process other's middleware by scope
   const localMws = other.middlewares.filter(m => m.scope === "local");
   const scopedMws = other.middlewares.filter(m => m.scope === "scoped");
   const globalMws = other.middlewares.filter(m => m.scope === "global");
@@ -1115,8 +1143,12 @@ private createIsolatedMiddleware(middlewares: ScopedMiddleware[]): Middleware {
 - [ ] `Composer.fork()` — errors don't affect main chain
 - [ ] `Composer.tap()` — runs middleware, always continues chain
 - [ ] `Composer.lazy()` — factory called per invocation
-- [ ] `Composer.onError()` — catches downstream errors
-- [ ] `Composer.onError()` — handler can re-throw
+- [ ] `Composer.onError()` — catches errors from middleware chain
+- [ ] `Composer.onError()` — multiple handlers: first to return non-undefined wins
+- [ ] `Composer.onError()` — unhandled errors logged via console.error (no re-throw)
+- [ ] `Composer.onError()` — resolves kind from registered error classes
+- [ ] `Composer.onError()` — kind is undefined for unregistered errors
+- [ ] `Composer.onError()` — handlers merged from extended plugins
 - [ ] `Composer.group()` — middleware isolated from parent
 - [ ] `Composer.group()` — parent properties visible inside group (prototype chain)
 - [ ] `Composer.group()` — group derives don't leak to parent

@@ -543,12 +543,13 @@ describe("Composer", () => {
 	// ─── onError() ───
 
 	describe("onError()", () => {
-		it("catches downstream errors", async () => {
+		it("catches errors from middleware", async () => {
 			let caughtError: unknown;
 
 			const app = new Composer()
 				.onError(({ error }) => {
 					caughtError = error;
+					return true; // handled
 				})
 				.use(() => {
 					throw new Error("test error");
@@ -559,32 +560,63 @@ describe("Composer", () => {
 			expect((caughtError as Error).message).toBe("test error");
 		});
 
-		it("handler can re-throw to propagate", async () => {
-			const app = new Composer()
-				.onError(({ error }) => {
-					throw error;
-				})
-				.use(() => {
-					throw new Error("propagated");
-				});
-
-			expect(app.run({})).rejects.toThrow("propagated");
-		});
-
-		it("handler can swallow error and chain continues", async () => {
-			let caughtError: unknown;
+		it("multiple handlers — first to return non-undefined wins", async () => {
+			const order: string[] = [];
 
 			const app = new Composer()
 				.onError(({ error }) => {
-					caughtError = error;
-					// swallow — don't re-throw
+					order.push("logger");
+					// return undefined → pass to next handler
+				})
+				.onError(({ error }) => {
+					order.push("handler");
+					return true; // handled
+				})
+				.onError(() => {
+					order.push("never");
+					return true;
 				})
 				.use(() => {
-					throw new Error("swallowed");
+					throw new Error("oops");
 				});
 
 			await app.run({});
-			expect((caughtError as Error).message).toBe("swallowed");
+			expect(order).toEqual(["logger", "handler"]);
+		});
+
+		it("default logs to console.error if no handler returns", async () => {
+			const originalError = console.error;
+			let logged = false;
+			console.error = () => { logged = true; };
+
+			try {
+				const app = new Composer()
+					.use(() => {
+						throw new Error("unhandled");
+					});
+
+				await app.run({});
+				expect(logged).toBe(true);
+			} finally {
+				console.error = originalError;
+			}
+		});
+
+		it("does not re-throw — process stays alive", async () => {
+			const originalError = console.error;
+			console.error = () => {};
+
+			try {
+				const app = new Composer()
+					.use(() => {
+						throw new Error("should not crash");
+					});
+
+				// Should resolve, not reject
+				await app.run({});
+			} finally {
+				console.error = originalError;
+			}
 		});
 
 		it("resolves error kind from registered error classes", async () => {
@@ -600,6 +632,7 @@ describe("Composer", () => {
 				.error("NotFound", NotFoundError)
 				.onError(({ kind }) => {
 					resolvedKind = kind;
+					return true;
 				})
 				.use(() => {
 					throw new NotFoundError();
@@ -616,6 +649,7 @@ describe("Composer", () => {
 				.error("NotFound", class extends Error {})
 				.onError(({ kind }) => {
 					resolvedKind = kind;
+					return true;
 				})
 				.use(() => {
 					throw new Error("unknown");
@@ -623,6 +657,27 @@ describe("Composer", () => {
 
 			await app.run({});
 			expect(resolvedKind).toBeUndefined();
+		});
+
+		it("handlers from extended plugins are merged", async () => {
+			class PluginError extends Error {}
+			let caughtKind: string | undefined;
+
+			const plugin = new Composer({ name: "err-plugin" })
+				.error("Plugin", PluginError)
+				.onError(({ kind }) => {
+					caughtKind = kind;
+					return true;
+				});
+
+			const app = new Composer()
+				.extend(plugin)
+				.use(() => {
+					throw new PluginError();
+				});
+
+			await app.run({});
+			expect(caughtKind).toBe("Plugin");
 		});
 	});
 

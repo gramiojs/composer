@@ -126,6 +126,7 @@ export interface EventComposer<
 
 	"~": {
 		middlewares: ScopedMiddleware<any>[];
+		onErrors: ErrorHandler<any>[];
 		extended: Set<string>;
 		compiled: ComposedMiddleware<any> | null;
 		name: string | undefined;

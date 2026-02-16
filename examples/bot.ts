@@ -80,8 +80,8 @@ const bot = new BotComposer()
 	.extend(withLogging)
 	.extend(withAuth) // ctx.user, ctx.isAdmin are now typed ✅
 
-	.onError((ctx, error) => {
-		console.error(`  ✗ Error in [${ctx.updateType}]:`, error);
+	.onError(({ context, error }) => {
+		console.error(`  ✗ Error in [${context.updateType}]:`, error);
 	})
 
 	// /start — consumed (no next → chain stops)
@@ -212,7 +212,7 @@ function createBot() {
 				console.log(`  [reply] ${text}`);
 			},
 		}))
-		.onError((_, error) => {
+		.onError(({ error }) => {
 			console.error("  ✗ Unhandled:", error);
 		});
 }
