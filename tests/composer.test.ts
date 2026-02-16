@@ -547,7 +547,7 @@ describe("Composer", () => {
 			let caughtError: unknown;
 
 			const app = new Composer()
-				.onError((_, error) => {
+				.onError(({ error }) => {
 					caughtError = error;
 				})
 				.use(() => {
@@ -561,7 +561,7 @@ describe("Composer", () => {
 
 		it("handler can re-throw to propagate", async () => {
 			const app = new Composer()
-				.onError((_, error) => {
+				.onError(({ error }) => {
 					throw error;
 				})
 				.use(() => {
@@ -575,7 +575,7 @@ describe("Composer", () => {
 			let caughtError: unknown;
 
 			const app = new Composer()
-				.onError((_, error) => {
+				.onError(({ error }) => {
 					caughtError = error;
 					// swallow — don't re-throw
 				})
@@ -585,6 +585,44 @@ describe("Composer", () => {
 
 			await app.run({});
 			expect((caughtError as Error).message).toBe("swallowed");
+		});
+
+		it("resolves error kind from registered error classes", async () => {
+			class NotFoundError extends Error {
+				constructor(message = "not found") {
+					super(message);
+				}
+			}
+
+			let resolvedKind: string | undefined;
+
+			const app = new Composer()
+				.error("NotFound", NotFoundError)
+				.onError(({ kind }) => {
+					resolvedKind = kind;
+				})
+				.use(() => {
+					throw new NotFoundError();
+				});
+
+			await app.run({});
+			expect(resolvedKind).toBe("NotFound");
+		});
+
+		it("kind is undefined for unregistered errors", async () => {
+			let resolvedKind: string | undefined = "should-be-undefined";
+
+			const app = new Composer()
+				.error("NotFound", class extends Error {})
+				.onError(({ kind }) => {
+					resolvedKind = kind;
+				})
+				.use(() => {
+					throw new Error("unknown");
+				});
+
+			await app.run({});
+			expect(resolvedKind).toBeUndefined();
 		});
 	});
 

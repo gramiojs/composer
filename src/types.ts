@@ -7,8 +7,12 @@ export type Middleware<T> = (context: T, next: Next) => unknown;
 /** Composed middleware: next is optional (acts as terminal continuation) */
 export type ComposedMiddleware<T> = (context: T, next?: Next) => Promise<unknown>;
 
-/** Error handler receives context and the caught error */
-export type ErrorHandler<T> = (context: T, error: unknown) => unknown;
+/** Error handler receives an object with error, context, and resolved kind */
+export type ErrorHandler<T> = (params: {
+	error: unknown;
+	context: T;
+	kind?: string;
+}) => unknown;
 
 /** Function that computes additional context properties */
 export type DeriveHandler<T, D> = (context: T) => D | Promise<D>;

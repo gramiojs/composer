@@ -203,7 +203,14 @@ export class Composer<
 			try {
 				return await next();
 			} catch (error) {
-				return handler(ctx, error);
+				let kind: string | undefined;
+				for (const [k, ErrorClass] of Object.entries(this["~"].errorsDefinitions)) {
+					if (error instanceof ErrorClass) {
+						kind = k;
+						break;
+					}
+				}
+				return handler({ error, context: ctx, kind });
 			}
 		};
 		this["~"].middlewares.push({ fn: mw, scope: "local" });
