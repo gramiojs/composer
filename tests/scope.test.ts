@@ -43,7 +43,8 @@ describe("Scope system", () => {
 			const app = new Composer()
 				.extend(plugin)
 				.use((ctx, next) => {
-					parentSaw = ctx.secret;
+					// @ts-expect-error
+					parentSaw = ctx["secret"];
 					return next();
 				});
 

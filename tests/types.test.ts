@@ -259,3 +259,114 @@ describe("EventComposer types", () => {
 		expectTypeOf<D>().toMatchTypeOf<{ message: { x: number }; callback_query: { y: string } }>();
 	});
 });
+
+// ─── decorate() types ───
+
+describe("decorate() types", () => {
+	it("decorate() grows TOut", () => {
+		const c = new Composer<{ a: number }>().decorate({ b: "hello" });
+
+		c.use((ctx, next) => {
+			expectTypeOf(ctx).toEqualTypeOf<{ a: number } & { b: string }>();
+			return next();
+		});
+	});
+
+	it("chained decorates accumulate", () => {
+		new Composer<{ a: number }>()
+			.decorate({ b: "str" })
+			.decorate({ c: true })
+			.use((ctx, next) => {
+				expectTypeOf(ctx).toEqualTypeOf<
+					{ a: number } & { b: string } & { c: boolean }
+				>();
+				return next();
+			});
+	});
+
+	it("decorate with scope grows TExposed", () => {
+		const c = new Composer<{ a: number }>().decorate(
+			{ b: "str" },
+			{ as: "scoped" },
+		);
+
+		type Exposed = typeof c extends Composer<any, any, infer E> ? E : never;
+		expectTypeOf<Exposed>().toMatchTypeOf<{ b: string }>();
+	});
+
+	it("decorate without scope does NOT grow TExposed", () => {
+		const c = new Composer<{ a: number }>().decorate({ b: "str" });
+
+		type Exposed = typeof c extends Composer<any, any, infer E> ? E : never;
+		expectTypeOf<Exposed>().toEqualTypeOf<{}>();
+	});
+
+	it("decorate + derive interleave correctly", () => {
+		new Composer<{ a: number }>()
+			.decorate({ b: "static" })
+			.derive(() => ({ c: true }))
+			.use((ctx, next) => {
+				expectTypeOf(ctx).toEqualTypeOf<
+					{ a: number } & { b: string } & { c: boolean }
+				>();
+				return next();
+			});
+	});
+});
+
+// ─── when() types ───
+
+describe("when() types", () => {
+	it("when() adds Partial types for derived properties", () => {
+		new Composer<{ a: number }>()
+			.when(true, (c) => c.derive(() => ({ extra: 42 })))
+			.use((ctx, next) => {
+				expectTypeOf(ctx).toEqualTypeOf<
+					{ a: number } & Partial<{ extra: number }>
+				>();
+				return next();
+			});
+	});
+
+	it("when() adds Partial types for decorated properties", () => {
+		new Composer<{ a: number }>()
+			.when(true, (c) => c.decorate({ flag: "on" }))
+			.use((ctx, next) => {
+				expectTypeOf(ctx).toEqualTypeOf<
+					{ a: number } & Partial<{ flag: string }>
+				>();
+				return next();
+			});
+	});
+
+	it("when() does NOT affect TExposed", () => {
+		const c = new Composer<{ a: number }>()
+			.when(true, (c) => c.derive(() => ({ extra: 42 })));
+
+		type Exposed = typeof c extends Composer<any, any, infer E> ? E : never;
+		expectTypeOf<Exposed>().toEqualTypeOf<{}>();
+	});
+
+	it("when(false) produces same types as when(true)", () => {
+		const a = new Composer<{ x: number }>()
+			.when(true, (c) => c.derive(() => ({ y: "str" })));
+		const b = new Composer<{ x: number }>()
+			.when(false, (c) => c.derive(() => ({ y: "str" })));
+
+		type AOut = typeof a extends Composer<any, infer O, any> ? O : never;
+		type BOut = typeof b extends Composer<any, infer O, any> ? O : never;
+		expectTypeOf<AOut>().toEqualTypeOf<BOut>();
+	});
+
+	it("when() preserves existing types untouched", () => {
+		new Composer<{ a: number }>()
+			.derive(() => ({ b: "existing" }))
+			.when(true, (c) => c.derive(() => ({ c: true })))
+			.use((ctx, next) => {
+				// a and b are required, c is optional
+				expectTypeOf(ctx.a).toEqualTypeOf<number>();
+				expectTypeOf(ctx.b).toEqualTypeOf<string>();
+				return next();
+			});
+	});
+});

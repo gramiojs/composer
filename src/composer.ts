@@ -72,6 +72,27 @@ export class Composer<
 
 	// ─── Middleware Methods ───
 
+	decorate<D extends object>(
+		values: D,
+	): Composer<TIn, TOut & D, TExposed>;
+	decorate<D extends object>(
+		values: D,
+		options: { as: "scoped" | "global" },
+	): Composer<TIn, TOut & D, TExposed & D>;
+	decorate<D extends object>(
+		values: D,
+		options?: { as: "scoped" | "global" },
+	): Composer<TIn, TOut & D, TExposed & D> {
+		const mw: Middleware<any> = (ctx, next) => {
+			Object.assign(ctx, values);
+			return next();
+		};
+		const scope: Scope = options?.as ?? "local";
+		this["~"].middlewares.push({ fn: mw, scope });
+		this.invalidate();
+		return this as any;
+	}
+
 	use(
 		...middleware: Middleware<TOut>[]
 	): Composer<TIn, TOut, TExposed> {
@@ -286,6 +307,28 @@ export class Composer<
 		this["~"].onErrors.push(handler);
 		this.invalidate();
 		return this;
+	}
+
+	// ─── Conditional Registration ───
+
+	when<UOut extends TOut>(
+		condition: boolean,
+		fn: (composer: Composer<TOut, TOut, {}>) => Composer<TOut, UOut, any>,
+	): Composer<TIn, TOut & Partial<Omit<UOut, keyof TOut>>, TExposed> {
+		if (condition) {
+			const temp = new (this.constructor as any)();
+			fn(temp);
+			for (const mw of temp["~"].middlewares) {
+				this["~"].middlewares.push(mw);
+			}
+			Object.assign(this["~"].errorsDefinitions, temp["~"].errorsDefinitions);
+			this["~"].onErrors.push(...temp["~"].onErrors);
+			for (const key of temp["~"].extended) {
+				this["~"].extended.add(key);
+			}
+		}
+		this.invalidate();
+		return this as any;
 	}
 
 	// ─── Error Registration ───

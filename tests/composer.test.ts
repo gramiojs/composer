@@ -365,19 +365,16 @@ describe("Composer", () => {
 		it("dispatches to correct case", async () => {
 			const calls: string[] = [];
 
-			const app = new Composer<{ type: string }>().route(
-				(ctx) => ctx.type,
-				{
-					a: (_, next) => {
-						calls.push("a");
-						return next();
-					},
-					b: (_, next) => {
-						calls.push("b");
-						return next();
-					},
+			const app = new Composer<{ type: string }>().route((ctx) => ctx.type, {
+				a: (_, next) => {
+					calls.push("a");
+					return next();
 				},
-			);
+				b: (_, next) => {
+					calls.push("b");
+					return next();
+				},
+			});
 
 			await app.run({ type: "a" });
 			expect(calls).toEqual(["a"]);
@@ -462,21 +459,18 @@ describe("Composer", () => {
 		it("array of middleware as route case", async () => {
 			const calls: string[] = [];
 
-			const app = new Composer<{ type: string }>().route(
-				(ctx) => ctx.type,
-				{
-					a: [
-						(_, next) => {
-							calls.push("mw1");
-							return next();
-						},
-						(_, next) => {
-							calls.push("mw2");
-							return next();
-						},
-					],
-				},
-			);
+			const app = new Composer<{ type: string }>().route((ctx) => ctx.type, {
+				a: [
+					(_, next) => {
+						calls.push("mw1");
+						return next();
+					},
+					(_, next) => {
+						calls.push("mw2");
+						return next();
+					},
+				],
+			});
 
 			await app.run({ type: "a" });
 			expect(calls).toEqual(["mw1", "mw2"]);
@@ -495,10 +489,9 @@ describe("Composer", () => {
 					return next();
 				});
 
-			const app = new Composer<{ type: string }>().route(
-				(ctx) => ctx.type,
-				{ a: handler },
-			);
+			const app = new Composer<{ type: string }>().route((ctx) => ctx.type, {
+				a: handler,
+			});
 
 			await app.run({ type: "a" });
 			expect(calls).toEqual(["c1", "c2"]);
@@ -535,12 +528,10 @@ describe("Composer", () => {
 			const app = new Composer<{ type: string }>().route(
 				(ctx) => ctx.type,
 				(route) => {
-					route
-						.on("a")
-						.use((_, next) => {
-							calls.push("chained");
-							return next();
-						});
+					route.on("a").use((_, next) => {
+						calls.push("chained");
+						return next();
+					});
 				},
 			);
 
@@ -690,29 +681,24 @@ describe("Composer", () => {
 		it("mixed case types: middleware, array, Composer", async () => {
 			const calls: string[] = [];
 
-			const composerCase = new Composer<{ type: string }>().use(
-				(_, next) => {
-					calls.push("composer");
+			const composerCase = new Composer<{ type: string }>().use((_, next) => {
+				calls.push("composer");
+				return next();
+			});
+
+			const app = new Composer<{ type: string }>().route((ctx) => ctx.type, {
+				plain: (_, next) => {
+					calls.push("plain");
 					return next();
 				},
-			);
-
-			const app = new Composer<{ type: string }>().route(
-				(ctx) => ctx.type,
-				{
-					plain: (_, next) => {
-						calls.push("plain");
+				arr: [
+					(_, next) => {
+						calls.push("arr");
 						return next();
 					},
-					arr: [
-						(_, next) => {
-							calls.push("arr");
-							return next();
-						},
-					],
-					comp: composerCase,
-				},
-			);
+				],
+				comp: composerCase,
+			});
 
 			await app.run({ type: "plain" });
 			expect(calls).toEqual(["plain"]);
@@ -910,13 +896,14 @@ describe("Composer", () => {
 		it("default logs to console.error if no handler returns", async () => {
 			const originalError = console.error;
 			let logged = false;
-			console.error = () => { logged = true; };
+			console.error = () => {
+				logged = true;
+			};
 
 			try {
-				const app = new Composer()
-					.use(() => {
-						throw new Error("unhandled");
-					});
+				const app = new Composer().use(() => {
+					throw new Error("unhandled");
+				});
 
 				await app.run({});
 				expect(logged).toBe(true);
@@ -930,10 +917,9 @@ describe("Composer", () => {
 			console.error = () => {};
 
 			try {
-				const app = new Composer()
-					.use(() => {
-						throw new Error("should not crash");
-					});
+				const app = new Composer().use(() => {
+					throw new Error("should not crash");
+				});
 
 				// Should resolve, not reject
 				await app.run({});
@@ -993,11 +979,9 @@ describe("Composer", () => {
 					return true;
 				});
 
-			const app = new Composer()
-				.extend(plugin)
-				.use(() => {
-					throw new PluginError();
-				});
+			const app = new Composer().extend(plugin).use(() => {
+				throw new PluginError();
+			});
 
 			await app.run({});
 			expect(caughtKind).toBe("Plugin");
@@ -1083,6 +1067,239 @@ describe("Composer", () => {
 
 			await app.run({});
 			expect(calls).toEqual(["ran"]);
+		});
+	});
+
+	// ─── decorate() ───
+
+	describe("decorate()", () => {
+		it("adds static values to context", async () => {
+			let seen: { db: string } | undefined;
+			const app = new Composer()
+				.decorate({ db: "postgres" })
+				.use((ctx, next) => {
+					seen = { db: (ctx as any).db };
+					return next();
+				});
+
+			await app.run({});
+			expect(seen).toEqual({ db: "postgres" });
+		});
+
+		it("multiple decorates accumulate", async () => {
+			let seen: any;
+			const app = new Composer()
+				.decorate({ a: 1 })
+				.decorate({ b: "two" })
+				.use((ctx, next) => {
+					seen = { a: (ctx as any).a, b: (ctx as any).b };
+					return next();
+				});
+
+			await app.run({});
+			expect(seen).toEqual({ a: 1, b: "two" });
+		});
+
+		it("decorated values visible alongside derived values", async () => {
+			let seen: any;
+			const app = new Composer<{ base: number }>()
+				.decorate({ static: "hello" })
+				.derive((ctx) => ({ computed: ctx.base * 2 }))
+				.use((ctx, next) => {
+					seen = {
+						static: (ctx as any).static,
+						computed: (ctx as any).computed,
+					};
+					return next();
+				});
+
+			await app.run({ base: 5 });
+			expect(seen).toEqual({ static: "hello", computed: 10 });
+		});
+
+		it("assigns same reference each time (no function call overhead)", async () => {
+			const obj = { x: 42 };
+			const refs: any[] = [];
+			const app = new Composer().decorate({ obj }).use((ctx, next) => {
+				refs.push((ctx as any).obj);
+				return next();
+			});
+
+			await app.run({});
+			await app.run({});
+			expect(refs[0]).toBe(obj);
+			expect(refs[1]).toBe(obj);
+			expect(refs[0]).toBe(refs[1]);
+		});
+
+		it("scoped decorate propagates via extend", async () => {
+			let seen: any;
+			const plugin = new Composer({ name: "plugin" }).decorate(
+				{ fromPlugin: true },
+				{ as: "scoped" },
+			);
+
+			const app = new Composer().extend(plugin).use((ctx, next) => {
+				seen = (ctx as any).fromPlugin;
+				return next();
+			});
+
+			await app.run({});
+			expect(seen).toBe(true);
+		});
+	});
+
+	// ─── when() ───
+
+	describe("when()", () => {
+		it("condition true — middleware runs", async () => {
+			const calls: string[] = [];
+			const app = new Composer()
+				.when(true, (c) =>
+					c.use((_, next) => {
+						calls.push("when-block");
+						return next();
+					}),
+				)
+				.use((_, next) => {
+					calls.push("after");
+					return next();
+				});
+
+			await app.run({});
+			expect(calls).toEqual(["when-block", "after"]);
+		});
+
+		it("condition false — middleware does not run", async () => {
+			const calls: string[] = [];
+			const app = new Composer()
+				.when(false, (c) =>
+					c.use((_, next) => {
+						calls.push("when-block");
+						return next();
+					}),
+				)
+				.use((_, next) => {
+					calls.push("after");
+					return next();
+				});
+
+			await app.run({});
+			expect(calls).toEqual(["after"]);
+		});
+
+		it("derive inside when block works at runtime", async () => {
+			let seen: any;
+			const app = new Composer<{ base: number }>()
+				.when(true, (c) => c.derive((ctx) => ({ doubled: ctx.base * 2 })))
+				.use((ctx, next) => {
+					seen = (ctx as any).doubled;
+					return next();
+				});
+
+			await app.run({ base: 7 });
+			expect(seen).toBe(14);
+		});
+
+		it("decorate inside when block works at runtime", async () => {
+			let seen: any;
+			const app = new Composer()
+				.when(true, (c) => c.decorate({ flag: "on" }))
+				.use((ctx, next) => {
+					seen = (ctx as any).flag;
+					return next();
+				});
+
+			await app.run({});
+			expect(seen).toBe("on");
+		});
+
+		it("extend inside when block works", async () => {
+			const calls: string[] = [];
+			const plugin = new Composer({ name: "conditional-plugin" }).use(
+				(_, next) => {
+					calls.push("plugin");
+					return next();
+				},
+			);
+
+			const app = new Composer()
+				.when(true, (c) => c.extend(plugin))
+				.use((_, next) => {
+					calls.push("main");
+					return next();
+				});
+
+			await app.run({});
+			expect(calls).toEqual(["plugin", "main"]);
+		});
+
+		it("propagates dedup keys from when block", async () => {
+			const calls: number[] = [];
+			const plugin = new Composer({ name: "dedup-test" }).use((_, next) => {
+				calls.push(1);
+				return next();
+			});
+
+			const app = new Composer()
+				.when(true, (c) => c.extend(plugin))
+				.extend(plugin); // should be deduped
+
+			await app.run({});
+			expect(calls).toEqual([1]); // only once
+		});
+
+		it("onError inside when block works", async () => {
+			let caughtKind: string | undefined;
+			class TestError extends Error {}
+
+			const app = new Composer()
+				.error("test", TestError)
+				.when(true, (c) =>
+					c.onError(({ kind }) => {
+						caughtKind = kind;
+						return "handled";
+					}),
+				)
+				.use(() => {
+					throw new TestError("boom");
+				});
+
+			await app.run({});
+			expect(caughtKind).toBe("test");
+		});
+
+		it("nested when blocks", async () => {
+			const calls: string[] = [];
+			const app = new Composer().when(true, (c) =>
+				c
+					.use((_, next) => {
+						calls.push("outer");
+						return next();
+					})
+					.when(true, (c2) =>
+						c2.use((_, next) => {
+							calls.push("inner");
+							return next();
+						}),
+					),
+			);
+
+			await app.run({});
+			expect(calls).toEqual(["outer", "inner"]);
+		});
+
+		it("false condition — derive not applied at runtime", async () => {
+			let seen: any;
+			const app = new Composer()
+				.when(false, (c) => c.derive(() => ({ ghost: 999 })))
+				.use((ctx, next) => {
+					seen = ctx.ghost;
+					return next();
+				});
+
+			await app.run({});
+			expect(seen).toBeUndefined();
 		});
 	});
 });

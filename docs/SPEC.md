@@ -165,6 +165,31 @@ use(...middleware: Middleware<TOut>[]): Composer<TIn, TOut, TExposed>
 - Middleware sees the full `TOut` context
 - Does NOT change `TOut` or `TExposed` — just adds execution steps
 
+#### `decorate(values)` — static context enrichment
+
+```typescript
+decorate<D extends object>(
+  values: D
+): Composer<TIn, TOut & D, TExposed>
+```
+
+- Assigns `values` onto the context via `Object.assign(ctx, values)` at runtime
+- Unlike `derive()`, takes a plain object — no handler function, no per-request computation
+- The same object reference is assigned every time (no cloning)
+- `TOut` grows by `& D`, `TExposed` is NOT affected (local by default)
+
+#### `decorate(values, options)` — with scope
+
+```typescript
+decorate<D extends object>(
+  values: D,
+  options: { as: "scoped" | "global" }
+): Composer<TIn, TOut & D, TExposed & D>
+```
+
+- Same as above, but the decorate is scoped
+- Both `TOut` AND `TExposed` grow by `& D`
+
 #### `derive(handler)`
 
 ```typescript
@@ -327,6 +352,40 @@ onError(handler: ErrorHandler<TOut>): Composer<TIn, TOut, TExposed>
   4. If no handler returns a value → `console.error("[composer] Unhandled error:", error)` (no re-throw)
 - Multiple `onError()` calls add to the array (Elysia-style chain, not nested boundaries)
 - `extend()` merges error handlers from child to parent
+
+#### `when(condition, fn)` — conditional registration
+
+```typescript
+when<UOut extends TOut>(
+  condition: boolean,
+  fn: (composer: Composer<TOut, TOut, {}>) => Composer<TOut, UOut, any>,
+): Composer<TIn, TOut & Partial<Omit<UOut, keyof TOut>>, TExposed>
+```
+
+- At **registration time**, evaluates `condition`
+- If `true`: creates a temporary Composer, passes it to `fn`, copies all middleware/errors/dedup keys to `this`
+- If `false`: no-op (nothing registered)
+- **Types are always `Partial`** — added properties become optional (`T | undefined`) because the block may not execute
+- Does NOT affect `TExposed` — conditional blocks don't propagate scope
+- The `fn` callback must return the composer (arrow functions with implicit return work naturally)
+- Supports nesting: `when(a, c => c.when(b, c2 => ...))`
+- Propagates dedup keys — `extend()` inside `when()` prevents duplicate registration later
+- Uses `new (this.constructor)()` internally — works correctly with EventComposer subclass
+
+**Usage:**
+```typescript
+const app = new Composer<{ request: Request }>()
+  .when(process.env.NODE_ENV !== "production", (c) =>
+    c.use(verboseLogger)
+  )
+  .when(config.features.auth, (c) =>
+    c.derive(() => ({ user: getUser() }))
+  )
+  .use((ctx, next) => {
+    ctx.user; // type: User | undefined (Partial — may not be applied)
+    return next();
+  });
+```
 
 ### 3.2 Scope System
 
@@ -1197,6 +1256,17 @@ private createIsolatedMiddleware(middlewares: ScopedMiddleware[]): Middleware {
 - [ ] `Composer.onError()` — resolves kind from registered error classes
 - [ ] `Composer.onError()` — kind is undefined for unregistered errors
 - [ ] `Composer.onError()` — handlers merged from extended plugins
+- [ ] `Composer.decorate()` — adds static values to context
+- [ ] `Composer.decorate()` — multiple decorates accumulate
+- [ ] `Composer.decorate()` — scoped decorate propagates via extend
+- [ ] `Composer.decorate()` — same reference assigned (no cloning)
+- [ ] `Composer.when()` — condition true: middleware runs
+- [ ] `Composer.when()` — condition false: middleware skipped
+- [ ] `Composer.when()` — derive/decorate inside when block works
+- [ ] `Composer.when()` — propagates dedup keys from conditional block
+- [ ] `Composer.when()` — onError inside when block works
+- [ ] `Composer.when()` — nested when blocks
+- [ ] `Composer.when()` — types are Partial (optional) for added properties
 - [ ] `Composer.group()` — middleware isolated from parent
 - [ ] `Composer.group()` — parent properties visible inside group (prototype chain)
 - [ ] `Composer.group()` — group derives don't leak to parent

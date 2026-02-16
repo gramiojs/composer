@@ -46,6 +46,14 @@ export interface EventComposer<
 		handler: Middleware<ResolveEventCtx<TOut, TEventMap, TDerives, E>>,
 	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
 
+	decorate<D extends object>(
+		values: D,
+	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed, TDerives>;
+	decorate<D extends object>(
+		values: D,
+		options: { as: "scoped" | "global" },
+	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed & D, TDerives>;
+
 	use(
 		...middleware: Middleware<TOut>[]
 	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
@@ -106,6 +114,11 @@ export interface EventComposer<
 	onError(
 		handler: ErrorHandler<TOut>,
 	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
+
+	when<UOut extends TOut>(
+		condition: boolean,
+		fn: (composer: Composer<TOut, TOut, {}>) => Composer<TOut, UOut, any>,
+	): EventComposer<TBase, TEventMap, TIn, TOut & Partial<Omit<UOut, keyof TOut>>, TExposed, TDerives>;
 
 	error(
 		kind: string,
