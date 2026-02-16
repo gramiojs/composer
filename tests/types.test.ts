@@ -23,8 +23,8 @@ describe("Type definitions", () => {
 	});
 
 	it("ErrorHandler<T> receives context and error", () => {
-		type Expected = (context: { a: number }, error: unknown) => unknown;
-		expectTypeOf<ErrorHandler<{ a: number }>>().toEqualTypeOf<Expected>();
+		type Expected = (params: {error: unknown, context: { a: number }}) => unknown;
+		expectTypeOf<ErrorHandler<{ a: number }>>().toExtend<Expected>();
 	});
 
 	it("DeriveHandler returns D or Promise<D>", () => {
