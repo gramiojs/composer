@@ -36,8 +36,10 @@ describe("createComposer() / EventComposer", () => {
 				calls.push("message");
 				return next();
 			})
+			.derive("callback_query", () => ({ timestamp: 12345 }))
 			.on("callback_query", (ctx, next) => {
 				calls.push("callback");
+				expect(ctx.timestamp).toBe(12345);
 				return next();
 			});
 
@@ -121,12 +123,10 @@ describe("createComposer() / EventComposer", () => {
 			.as("scoped");
 
 		let saw: unknown;
-		const app = new Composer()
-			.extend(plugin)
-			.on("message", (ctx, next) => {
-				saw = (ctx as any).extra;
-				return next();
-			});
+		const app = new Composer().extend(plugin).on("message", (ctx, next) => {
+			saw = (ctx as any).extra;
+			return next();
+		});
 
 		await app.run({ updateType: "message" });
 		expect(saw).toBe("value");

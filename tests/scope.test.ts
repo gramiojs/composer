@@ -11,7 +11,7 @@ describe("Scope system", () => {
 				.derive(() => ({ a: 1 }))
 				.as("scoped");
 
-			for (const entry of plugin._middlewares) {
+			for (const entry of plugin["~"].middlewares) {
 				expect(entry.scope).toBe("scoped");
 			}
 		});
@@ -22,7 +22,7 @@ describe("Scope system", () => {
 				.derive(() => ({ a: 1 }))
 				.as("global");
 
-			for (const entry of plugin._middlewares) {
+			for (const entry of plugin["~"].middlewares) {
 				expect(entry.scope).toBe("global");
 			}
 		});
@@ -137,12 +137,12 @@ describe("Scope system", () => {
 				.derive(() => ({ a: 1 }));
 
 			// Manually set first to global
-			plugin._middlewares[0].scope = "global";
+			plugin["~"].middlewares[0].scope = "global";
 
 			plugin.as("scoped");
 
 			// global should remain global, not be demoted
-			expect(plugin._middlewares[0].scope).toBe("global");
+			expect(plugin["~"].middlewares[0].scope).toBe("global");
 		});
 	});
 });

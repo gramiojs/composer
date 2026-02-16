@@ -10,6 +10,8 @@ import type {
 	MaybeArray,
 	Middleware,
 	Next,
+	Scope,
+	ScopedMiddleware,
 } from "./types.ts";
 
 /** EventComposer interface — Composer + .on() with all chainable methods returning EventComposer */
@@ -34,6 +36,15 @@ export interface EventComposer<
 	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed>;
 	derive<D extends object>(
 		handler: DeriveHandler<TOut, D>,
+		options: { as: "scoped" | "global" },
+	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed & D>;
+	derive<E extends keyof TEventMap & string, D extends object>(
+		event: MaybeArray<E>,
+		handler: DeriveHandler<TOut & TEventMap[E], D>,
+	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed>;
+	derive<E extends keyof TEventMap & string, D extends object>(
+		event: MaybeArray<E>,
+		handler: DeriveHandler<TOut & TEventMap[E], D>,
 		options: { as: "scoped" | "global" },
 	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed & D>;
 
@@ -70,6 +81,11 @@ export interface EventComposer<
 		handler: ErrorHandler<TOut>,
 	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed>;
 
+	error(
+		kind: string,
+		errorClass: { new (...args: any): any; prototype: Error },
+	): this;
+
 	as(
 		scope: "scoped" | "global",
 	): EventComposer<TBase, TEventMap, TIn, TOut, TOut>;
@@ -85,15 +101,18 @@ export interface EventComposer<
 	compose(): ComposedMiddleware<TIn>;
 	run(context: TIn, next?: Next): Promise<void>;
 
-	readonly name: string | undefined;
-	readonly seed: unknown;
-	/** @internal */
-	_middlewares: any[];
-	/** @internal */
-	_extended: Set<string>;
-	/** @internal */
-	_compiled: any;
-	/** @internal */
+	_: {
+		middlewares: ScopedMiddleware<any>[];
+		extended: Set<string>;
+		compiled: ComposedMiddleware<any> | null;
+		name: string | undefined;
+		seed: unknown;
+		errorsDefinitions: Record<
+			string,
+			{ new (...args: any): any; prototype: Error }
+		>;
+	};
+	"~": EventComposer<TBase, TEventMap, TIn, TOut, TExposed>["_"];
 	invalidate(): void;
 }
 
@@ -135,6 +154,36 @@ export function createComposer<
 				}
 				return next();
 			});
+			return this;
+		}
+
+		derive(
+			eventOrHandler: any,
+			handlerOrOptions?: any,
+			maybeOptions?: any,
+		) {
+			// derive(handler) or derive(handler, options)
+			if (typeof eventOrHandler === "function") {
+				return super.derive(eventOrHandler, handlerOrOptions);
+			}
+
+			// derive(event, handler) or derive(event, handler, options)
+			const events = Array.isArray(eventOrHandler)
+				? eventOrHandler
+				: [eventOrHandler];
+			const handler = handlerOrOptions;
+			const options = maybeOptions;
+
+			const mw: Middleware<any> = async (ctx, next) => {
+				if (events.includes(config.discriminator(ctx))) {
+					Object.assign(ctx, await handler(ctx));
+				}
+				return next();
+			};
+
+			const scope: Scope = options?.as ?? "local";
+			this._.middlewares.push({ fn: mw, scope });
+			this.invalidate();
 			return this;
 		}
 	}

@@ -17,24 +17,27 @@ export class Composer<
 	TOut extends TIn = TIn,
 	TExposed extends object = {},
 > {
-	/** @internal */
-	_middlewares: ScopedMiddleware<any>[] = [];
-	/** @internal */
-	_extended = new Set<string>();
-	/** @internal */
-	_compiled: ComposedMiddleware<TIn> | null = null;
+	_ = {
+		middlewares: [] as ScopedMiddleware<any>[],
+		extended: new Set<string>(),
+		compiled: null as ComposedMiddleware<any> | null,
+		name: undefined as string | undefined,
+		seed: undefined as unknown,
+		errorsDefinitions: {} as Record<
+			string,
+			{ new (...args: any): any; prototype: Error }
+		>,
+	};
 
-	readonly name: string | undefined;
-	readonly seed: unknown;
+	"~" = this._;
 
 	constructor(options?: ComposerOptions) {
-		this.name = options?.name;
-		this.seed = options?.seed;
+		this._.name = options?.name;
+		this._.seed = options?.seed;
 	}
 
-	/** @internal */
 	invalidate(): void {
-		this._compiled = null;
+		this._.compiled = null;
 	}
 
 	// ─── Middleware Methods ───
@@ -43,7 +46,7 @@ export class Composer<
 		...middleware: Middleware<TOut>[]
 	): Composer<TIn, TOut, TExposed> {
 		for (const fn of middleware) {
-			this._middlewares.push({ fn, scope: "local" });
+			this._.middlewares.push({ fn, scope: "local" });
 		}
 		this.invalidate();
 		return this;
@@ -66,7 +69,7 @@ export class Composer<
 			return next();
 		};
 		const scope: Scope = options?.as ?? "local";
-		this._middlewares.push({ fn: mw, scope });
+		this._.middlewares.push({ fn: mw, scope });
 		this.invalidate();
 		return this as any;
 	}
@@ -75,18 +78,18 @@ export class Composer<
 		predicate: ((context: TOut) => context is S) | ((context: TOut) => boolean | Promise<boolean>),
 		...middleware: Middleware<any>[]
 	): Composer<TIn, TOut, TExposed> {
-		const isGuard = middleware.length === 0;
+		const isGate = middleware.length === 0;
 
-		if (isGuard) {
-			// Guard mode: no handlers → gate the chain
+		if (isGate) {
+			// Gate mode: no handlers → gate the chain
 			// true  → call next() (continue)
 			// false → don't call next() (stop this chain)
 			const mw: Middleware<any> = async (ctx, next) => {
 				if (await predicate(ctx)) return next();
 			};
-			this._middlewares.push({ fn: mw, scope: "local" });
+			this._.middlewares.push({ fn: mw, scope: "local" });
 		} else {
-			// Handler mode: run middleware as side-effects, always continue
+			// Side-effects mode: run middleware, always continue
 			// true  → run handlers, then call next()
 			// false → call next()
 			const chain = compose(middleware);
@@ -96,7 +99,7 @@ export class Composer<
 				}
 				await next();
 			};
-			this._middlewares.push({ fn: mw, scope: "local" });
+			this._.middlewares.push({ fn: mw, scope: "local" });
 		}
 
 		this.invalidate();
@@ -111,9 +114,9 @@ export class Composer<
 		// Static boolean optimization
 		if (typeof predicate === "boolean") {
 			if (predicate) {
-				this._middlewares.push({ fn: onTrue as Middleware<any>, scope: "local" });
+				this._.middlewares.push({ fn: onTrue as Middleware<any>, scope: "local" });
 			} else if (onFalse) {
-				this._middlewares.push({ fn: onFalse as Middleware<any>, scope: "local" });
+				this._.middlewares.push({ fn: onFalse as Middleware<any>, scope: "local" });
 			}
 			this.invalidate();
 			return this;
@@ -125,7 +128,7 @@ export class Composer<
 			}
 			return onFalse ? onFalse(ctx, next) : next();
 		};
-		this._middlewares.push({ fn: mw, scope: "local" });
+		this._.middlewares.push({ fn: mw, scope: "local" });
 		this.invalidate();
 		return this;
 	}
@@ -143,7 +146,7 @@ export class Composer<
 			}
 			return fallback ? fallback(ctx, next) : next();
 		};
-		this._middlewares.push({ fn: mw, scope: "local" });
+		this._.middlewares.push({ fn: mw, scope: "local" });
 		this.invalidate();
 		return this;
 	}
@@ -165,7 +168,7 @@ export class Composer<
 			});
 			return next();
 		};
-		this._middlewares.push({ fn: mw, scope: "local" });
+		this._.middlewares.push({ fn: mw, scope: "local" });
 		this.invalidate();
 		return this;
 	}
@@ -178,7 +181,7 @@ export class Composer<
 			await chain(ctx, noopNext);
 			return next();
 		};
-		this._middlewares.push({ fn: mw, scope: "local" });
+		this._.middlewares.push({ fn: mw, scope: "local" });
 		this.invalidate();
 		return this;
 	}
@@ -190,7 +193,7 @@ export class Composer<
 			const resolved = await factory(ctx);
 			return resolved(ctx, next);
 		};
-		this._middlewares.push({ fn: mw, scope: "local" });
+		this._.middlewares.push({ fn: mw, scope: "local" });
 		this.invalidate();
 		return this;
 	}
@@ -198,11 +201,6 @@ export class Composer<
 	onError(
 		handler: ErrorHandler<TOut>,
 	): Composer<TIn, TOut, TExposed> {
-		// Wrap all SUBSEQUENT middleware in try/catch.
-		// We do this by capturing the current length — when building,
-		// subsequent middleware will be wrapped.
-		const boundaryIndex = this._middlewares.length;
-
 		const mw: Middleware<any> = async (ctx, next) => {
 			try {
 				return await next();
@@ -210,15 +208,25 @@ export class Composer<
 				return handler(ctx, error);
 			}
 		};
-		this._middlewares.push({ fn: mw, scope: "local" });
+		this._.middlewares.push({ fn: mw, scope: "local" });
 		this.invalidate();
+		return this;
+	}
+
+	// ─── Error Registration ───
+
+	error(
+		kind: string,
+		errorClass: { new (...args: any): any; prototype: Error },
+	): this {
+		this._.errorsDefinitions[kind] = errorClass;
 		return this;
 	}
 
 	// ─── Scope System ───
 
 	as(scope: "scoped" | "global"): Composer<TIn, TOut, TOut> {
-		for (const entry of this._middlewares) {
+		for (const entry of this._.middlewares) {
 			if (scope === "global" || entry.scope === "local") {
 				entry.scope = scope;
 			}
@@ -235,13 +243,13 @@ export class Composer<
 		const group = new Composer<TOut, TOut, {}>();
 		fn(group);
 
-		const chain = compose(group._middlewares.map((m) => m.fn));
+		const chain = compose(group._.middlewares.map((m) => m.fn));
 		const mw: Middleware<any> = async (ctx, next) => {
 			const scopedCtx = Object.create(ctx);
 			await chain(scopedCtx, noopNext);
 			return next();
 		};
-		this._middlewares.push({ fn: mw, scope: "local" });
+		this._.middlewares.push({ fn: mw, scope: "local" });
 		this.invalidate();
 		return this;
 	}
@@ -250,21 +258,24 @@ export class Composer<
 		other: Composer<UIn, UOut, UExposed>,
 	): Composer<TIn, TOut & UExposed, TExposed> {
 		// 1. Dedup check
-		if (other.name) {
-			const key = `${other.name}:${JSON.stringify(other.seed ?? null)}`;
-			if (this._extended.has(key)) return this as any;
-			this._extended.add(key);
+		if (other._.name) {
+			const key = `${other._.name}:${JSON.stringify(other._.seed ?? null)}`;
+			if (this._.extended.has(key)) return this as any;
+			this._.extended.add(key);
 		}
 
 		// 2. Inherit other's extended set (transitive dedup)
-		for (const key of other._extended) {
-			this._extended.add(key);
+		for (const key of other._.extended) {
+			this._.extended.add(key);
 		}
 
-		// 3. Process other's middleware by scope
-		const localMws = other._middlewares.filter((m) => m.scope === "local");
-		const scopedMws = other._middlewares.filter((m) => m.scope === "scoped");
-		const globalMws = other._middlewares.filter((m) => m.scope === "global");
+		// 3. Merge error definitions
+		Object.assign(this._.errorsDefinitions, other._.errorsDefinitions);
+
+		// 4. Process other's middleware by scope
+		const localMws = other._.middlewares.filter((m) => m.scope === "local");
+		const scopedMws = other._.middlewares.filter((m) => m.scope === "scoped");
+		const globalMws = other._.middlewares.filter((m) => m.scope === "global");
 
 		// Local → wrap in isolated group
 		if (localMws.length > 0) {
@@ -274,17 +285,17 @@ export class Composer<
 				await chain(scopedCtx, noopNext);
 				return next();
 			};
-			this._middlewares.push({ fn: isolated, scope: "local" });
+			this._.middlewares.push({ fn: isolated, scope: "local" });
 		}
 
 		// Scoped → add as LOCAL in parent (stops here)
 		for (const mw of scopedMws) {
-			this._middlewares.push({ fn: mw.fn, scope: "local" });
+			this._.middlewares.push({ fn: mw.fn, scope: "local" });
 		}
 
 		// Global → add as GLOBAL in parent (continues propagating)
 		for (const mw of globalMws) {
-			this._middlewares.push({ fn: mw.fn, scope: "global" });
+			this._.middlewares.push({ fn: mw.fn, scope: "global" });
 		}
 
 		this.invalidate();
@@ -292,12 +303,12 @@ export class Composer<
 	}
 
 	compose(): ComposedMiddleware<TIn> {
-		if (!this._compiled) {
-			this._compiled = compose(
-				this._middlewares.map((m) => m.fn),
-			) as ComposedMiddleware<TIn>;
+		if (!this._.compiled) {
+			this._.compiled = compose(
+				this._.middlewares.map((m) => m.fn),
+			) as ComposedMiddleware<any>;
 		}
-		return this._compiled;
+		return this._.compiled as ComposedMiddleware<TIn>;
 	}
 
 	run(context: TIn, next?: Next): Promise<void> {

@@ -26,6 +26,9 @@ src/
 - **Deduplication** by name + JSON.stringify(seed) with transitive inheritance of extended sets
 - **Lazy compilation** with dirty flag — compose() caches, any mutation invalidates
 - **guard() dual mode**: with handlers = side-effects (always continues); without handlers = gate (blocks chain if false)
+- **`_` / `"~"` internals** — all internal state lives on `_` object, `"~"` is alias. Access via `composer["~"].middlewares` etc. Pushes internals to end of IDE autocomplete
+- **Event-specific derive** — EventComposer supports `derive(event, handler)` for per-event context enrichment
+- **Error registration** — `error(kind, class)` stores error definitions in `["~"].errorsDefinitions`, merged on extend
 
 ## Commands
 
