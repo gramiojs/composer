@@ -15,6 +15,9 @@ export type {
 	LazyFactory,
 	MaybeArray,
 	Scope,
+	MiddlewareType,
+	MiddlewareInfo,
+	TraceHandler,
 	ComposerOptions,
 } from "./types.ts";
 

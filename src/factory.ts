@@ -1,6 +1,7 @@
 import { compose } from "./compose.ts";
 import { Composer, type RouteBuilder } from "./composer.ts";
 import { EventQueue } from "./queue.ts";
+import { nameMiddleware } from "./utils.ts";
 import type {
 	ComposedMiddleware,
 	ComposerOptions,
@@ -9,9 +10,11 @@ import type {
 	LazyFactory,
 	MaybeArray,
 	Middleware,
+	MiddlewareInfo,
 	Next,
 	Scope,
 	ScopedMiddleware,
+	TraceHandler,
 } from "./types.ts";
 
 /**
@@ -143,6 +146,9 @@ export interface EventComposer<
 		other: Composer<UIn, UOut, UExposed>,
 	): EventComposer<TBase, TEventMap, TIn, TOut & UExposed, TExposed, TDerives>;
 
+	inspect(): MiddlewareInfo[];
+	trace(handler: TraceHandler): this;
+
 	compose(): ComposedMiddleware<TIn>;
 	run(context: TIn, next?: Next): Promise<void>;
 
@@ -157,6 +163,7 @@ export interface EventComposer<
 			string,
 			{ new (...args: any): any; prototype: Error }
 		>;
+		tracer: TraceHandler | undefined;
 		Derives: TDerives;
 	};
 	invalidate(): void;
@@ -195,12 +202,16 @@ export function createComposer<
 			handler: Middleware<any>,
 		) {
 			const events = Array.isArray(event) ? event : [event];
-			super.use((ctx: any, next: any) => {
+			const eventLabel = events.join("|");
+			const mw: Middleware<any> = (ctx: any, next: any) => {
 				if (events.includes(config.discriminator(ctx))) {
 					return handler(ctx, next);
 				}
 				return next();
-			});
+			};
+			nameMiddleware(mw, "on", eventLabel);
+			this["~"].middlewares.push({ fn: mw, scope: "local", type: "on", name: eventLabel });
+			this.invalidate();
 			return this;
 		}
 
@@ -220,6 +231,9 @@ export function createComposer<
 				: [eventOrHandler];
 			const handler = handlerOrOptions;
 
+			const eventLabel = events.join("|");
+			const handlerName = handler.name || undefined;
+			const deriveName = handlerName ? `${eventLabel}:${handlerName}` : eventLabel;
 			const mw: Middleware<any> = async (ctx, next) => {
 				if (events.includes(config.discriminator(ctx))) {
 					Object.assign(ctx, await handler(ctx));
@@ -227,7 +241,8 @@ export function createComposer<
 				return next();
 			};
 
-			this["~"].middlewares.push({ fn: mw, scope: "local" });
+			nameMiddleware(mw, "derive", deriveName);
+			this["~"].middlewares.push({ fn: mw, scope: "local", type: "derive", name: deriveName });
 			this.invalidate();
 			return this;
 		}

@@ -1,5 +1,14 @@
 import type { Middleware, Next } from "./types.ts";
 
+/** Sets fn.name so stack traces show `type:handlerName` instead of `anonymous` */
+export function nameMiddleware<T extends Function>(fn: T, type: string, handlerName?: string): T {
+	Object.defineProperty(fn, "name", {
+		value: handlerName ? `${type}:${handlerName}` : type,
+		configurable: true,
+	});
+	return fn;
+}
+
 /** No-op next function: () => Promise.resolve() */
 export const noopNext: Next = () => Promise.resolve();
 

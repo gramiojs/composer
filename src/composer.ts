@@ -1,5 +1,5 @@
 import { compose } from "./compose.ts";
-import { noopNext } from "./utils.ts";
+import { nameMiddleware, noopNext } from "./utils.ts";
 import type {
 	ComposedMiddleware,
 	ComposerOptions,
@@ -7,9 +7,12 @@ import type {
 	ErrorHandler,
 	LazyFactory,
 	Middleware,
+	MiddlewareInfo,
+	MiddlewareType,
 	Next,
 	Scope,
 	ScopedMiddleware,
+	TraceHandler,
 } from "./types.ts";
 
 /** Route handler: single middleware, array, or Composer instance */
@@ -59,6 +62,7 @@ export class Composer<
 			string,
 			{ new (...args: any): any; prototype: Error }
 		>,
+		tracer: undefined as TraceHandler | undefined,
 	};
 
 	constructor(options?: ComposerOptions) {
@@ -87,8 +91,9 @@ export class Composer<
 			Object.assign(ctx, values);
 			return next();
 		};
+		nameMiddleware(mw, "decorate");
 		const scope: Scope = options?.as ?? "local";
-		this["~"].middlewares.push({ fn: mw, scope });
+		this["~"].middlewares.push({ fn: mw, scope, type: "decorate" });
 		this.invalidate();
 		return this as any;
 	}
@@ -97,7 +102,7 @@ export class Composer<
 		...middleware: Middleware<TOut>[]
 	): Composer<TIn, TOut, TExposed> {
 		for (const fn of middleware) {
-			this["~"].middlewares.push({ fn, scope: "local" });
+			this["~"].middlewares.push({ fn, scope: "local", type: "use", name: fn.name || undefined });
 		}
 		this.invalidate();
 		return this;
@@ -114,13 +119,15 @@ export class Composer<
 		handler: DeriveHandler<TOut, D>,
 		options?: { as: "scoped" | "global" },
 	): Composer<TIn, TOut & D, TExposed & D> {
+		const handlerName = handler.name || undefined;
 		const mw: Middleware<any> = async (ctx, next) => {
 			const result = await handler(ctx);
 			Object.assign(ctx, result);
 			return next();
 		};
+		nameMiddleware(mw, "derive", handlerName);
 		const scope: Scope = options?.as ?? "local";
-		this["~"].middlewares.push({ fn: mw, scope });
+		this["~"].middlewares.push({ fn: mw, scope, type: "derive", name: handlerName });
 		this.invalidate();
 		return this as any;
 	}
@@ -130,19 +137,15 @@ export class Composer<
 		...middleware: Middleware<any>[]
 	): Composer<TIn, TOut, TExposed> {
 		const isGate = middleware.length === 0;
+		const predicateName = predicate.name || undefined;
 
 		if (isGate) {
-			// Gate mode: no handlers → gate the chain
-			// true  → call next() (continue)
-			// false → don't call next() (stop this chain)
 			const mw: Middleware<any> = async (ctx, next) => {
 				if (await predicate(ctx)) return next();
 			};
-			this["~"].middlewares.push({ fn: mw, scope: "local" });
+			nameMiddleware(mw, "guard", predicateName);
+			this["~"].middlewares.push({ fn: mw, scope: "local", type: "guard", name: predicateName });
 		} else {
-			// Side-effects mode: run middleware, always continue
-			// true  → run handlers, then call next()
-			// false → call next()
 			const chain = compose(middleware);
 			const mw: Middleware<any> = async (ctx, next) => {
 				if (await predicate(ctx)) {
@@ -150,7 +153,8 @@ export class Composer<
 				}
 				await next();
 			};
-			this["~"].middlewares.push({ fn: mw, scope: "local" });
+			nameMiddleware(mw, "guard", predicateName);
+			this["~"].middlewares.push({ fn: mw, scope: "local", type: "guard", name: predicateName });
 		}
 
 		this.invalidate();
@@ -164,22 +168,25 @@ export class Composer<
 	): Composer<TIn, TOut, TExposed> {
 		// Static boolean optimization
 		if (typeof predicate === "boolean") {
+			const branchName = predicate ? (onTrue.name || undefined) : (onFalse?.name || undefined);
 			if (predicate) {
-				this["~"].middlewares.push({ fn: onTrue as Middleware<any>, scope: "local" });
+				this["~"].middlewares.push({ fn: onTrue as Middleware<any>, scope: "local", type: "branch", name: branchName });
 			} else if (onFalse) {
-				this["~"].middlewares.push({ fn: onFalse as Middleware<any>, scope: "local" });
+				this["~"].middlewares.push({ fn: onFalse as Middleware<any>, scope: "local", type: "branch", name: branchName });
 			}
 			this.invalidate();
 			return this;
 		}
 
+		const predicateName = predicate.name || undefined;
 		const mw: Middleware<any> = async (ctx, next) => {
 			if (await predicate(ctx)) {
 				return onTrue(ctx, next);
 			}
 			return onFalse ? onFalse(ctx, next) : next();
 		};
-		this["~"].middlewares.push({ fn: mw, scope: "local" });
+		nameMiddleware(mw, "branch", predicateName);
+		this["~"].middlewares.push({ fn: mw, scope: "local", type: "branch", name: predicateName });
 		this.invalidate();
 		return this;
 	}
@@ -241,6 +248,7 @@ export class Composer<
 				fallback != null ? resolveRouteHandler(fallback) : undefined;
 		}
 
+		const routerName = router.name || undefined;
 		const mw: Middleware<any> = async (ctx, next) => {
 			const key = await router(ctx);
 			if (key != null) {
@@ -249,7 +257,8 @@ export class Composer<
 			}
 			return resolvedFallback ? resolvedFallback(ctx, next) : next();
 		};
-		this["~"].middlewares.push({ fn: mw, scope: "local" });
+		nameMiddleware(mw, "route", routerName);
+		this["~"].middlewares.push({ fn: mw, scope: "local", type: "route", name: routerName });
 		this.invalidate();
 		return this;
 	}
@@ -271,7 +280,8 @@ export class Composer<
 			});
 			return next();
 		};
-		this["~"].middlewares.push({ fn: mw, scope: "local" });
+		nameMiddleware(mw, "fork");
+		this["~"].middlewares.push({ fn: mw, scope: "local", type: "fork" });
 		this.invalidate();
 		return this;
 	}
@@ -284,7 +294,8 @@ export class Composer<
 			await chain(ctx, noopNext);
 			return next();
 		};
-		this["~"].middlewares.push({ fn: mw, scope: "local" });
+		nameMiddleware(mw, "tap");
+		this["~"].middlewares.push({ fn: mw, scope: "local", type: "tap" });
 		this.invalidate();
 		return this;
 	}
@@ -292,11 +303,13 @@ export class Composer<
 	lazy(
 		factory: LazyFactory<TOut>,
 	): Composer<TIn, TOut, TExposed> {
+		const factoryName = factory.name || undefined;
 		const mw: Middleware<any> = async (ctx, next) => {
 			const resolved = await factory(ctx);
 			return resolved(ctx, next);
 		};
-		this["~"].middlewares.push({ fn: mw, scope: "local" });
+		nameMiddleware(mw, "lazy", factoryName);
+		this["~"].middlewares.push({ fn: mw, scope: "local", type: "lazy", name: factoryName });
 		this.invalidate();
 		return this;
 	}
@@ -367,7 +380,8 @@ export class Composer<
 			await chain(scopedCtx, noopNext);
 			return next();
 		};
-		this["~"].middlewares.push({ fn: mw, scope: "local" });
+		nameMiddleware(mw, "group");
+		this["~"].middlewares.push({ fn: mw, scope: "local", type: "group" });
 		this.invalidate();
 		return this;
 	}
@@ -392,6 +406,7 @@ export class Composer<
 		this["~"].onErrors.push(...other["~"].onErrors);
 
 		// 4. Process other's middleware by scope
+		const pluginName = other["~"].name;
 		const localMws = other["~"].middlewares.filter((m) => m.scope === "local");
 		const scopedMws = other["~"].middlewares.filter((m) => m.scope === "scoped");
 		const globalMws = other["~"].middlewares.filter((m) => m.scope === "global");
@@ -404,28 +419,67 @@ export class Composer<
 				await chain(scopedCtx, noopNext);
 				return next();
 			};
-			this["~"].middlewares.push({ fn: isolated, scope: "local" });
+			nameMiddleware(isolated, "extend", pluginName);
+			this["~"].middlewares.push({ fn: isolated, scope: "local", type: "extend", name: pluginName, plugin: pluginName });
 		}
 
 		// Scoped → add as LOCAL in parent (stops here)
 		for (const mw of scopedMws) {
-			this["~"].middlewares.push({ fn: mw.fn, scope: "local" });
+			this["~"].middlewares.push({ fn: mw.fn, scope: "local", type: mw.type, name: mw.name, plugin: mw.plugin || pluginName });
 		}
 
 		// Global → add as GLOBAL in parent (continues propagating)
 		for (const mw of globalMws) {
-			this["~"].middlewares.push({ fn: mw.fn, scope: "global" });
+			this["~"].middlewares.push({ fn: mw.fn, scope: "global", type: mw.type, name: mw.name, plugin: mw.plugin || pluginName });
 		}
 
 		this.invalidate();
 		return this as any;
 	}
 
+	inspect(): MiddlewareInfo[] {
+		return this["~"].middlewares.map((m, i) => {
+			const info: MiddlewareInfo = { index: i, type: m.type, scope: m.scope };
+			if (m.name) info.name = m.name;
+			if (m.plugin) info.plugin = m.plugin;
+			return info;
+		});
+	}
+
+	trace(handler: TraceHandler): this {
+		this["~"].tracer = handler;
+		this.invalidate();
+		return this;
+	}
+
 	compose(): ComposedMiddleware<TIn> {
 		if (!this["~"].compiled) {
-			const chain = compose(
-				this["~"].middlewares.map((m) => m.fn),
-			);
+			const mws = this["~"].middlewares;
+			const tracer = this["~"].tracer;
+
+			const fns = tracer
+				? mws.map((m, i) => {
+					const info: MiddlewareInfo = { index: i, type: m.type, scope: m.scope };
+					if (m.name) info.name = m.name;
+					if (m.plugin) info.plugin = m.plugin;
+					const orig = m.fn;
+					const traced: Middleware<any> = async (ctx, next) => {
+						const done = tracer(info, ctx);
+						try {
+							const result = await orig(ctx, next);
+							done?.();
+							return result;
+						} catch (err) {
+							done?.(err);
+							throw err;
+						}
+					};
+					nameMiddleware(traced, "traced", orig.name || m.name);
+					return traced;
+				})
+				: mws.map((m) => m.fn);
+
+			const chain = compose(fns);
 			const onErrors = this["~"].onErrors;
 			const errorsDefinitions = this["~"].errorsDefinitions;
 

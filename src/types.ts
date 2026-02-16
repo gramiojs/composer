@@ -26,10 +26,33 @@ export type MaybeArray<T> = T | T[];
 /** Scope level for middleware propagation */
 export type Scope = "local" | "scoped" | "global";
 
-/** Internal middleware entry with scope annotation */
+/** Which method created a middleware entry */
+export type MiddlewareType =
+	| "use" | "derive" | "decorate" | "guard" | "branch"
+	| "route" | "fork" | "tap" | "lazy" | "group" | "extend" | "on";
+
+/** Read-only projection of a middleware entry for inspect()/trace() */
+export interface MiddlewareInfo {
+	index: number;
+	type: MiddlewareType;
+	name?: string;
+	scope: Scope;
+	plugin?: string;
+}
+
+/** Trace callback invoked on middleware enter; returns cleanup called on exit */
+export type TraceHandler = (
+	entry: MiddlewareInfo,
+	context: any,
+) => ((error?: unknown) => void) | void;
+
+/** Internal middleware entry with scope annotation and metadata */
 export interface ScopedMiddleware<T> {
 	fn: Middleware<T>;
 	scope: Scope;
+	type: MiddlewareType;
+	name?: string;
+	plugin?: string;
 }
 
 /** Composer constructor options */

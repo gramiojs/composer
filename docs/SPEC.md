@@ -12,6 +12,7 @@ Zero dependencies. Cross-runtime (Bun / Node.js / Deno).
 - Abstract event system via factory pattern (`.on()`)
 - Opt-in concurrent event queue with graceful shutdown
 - Branching, routing, forking, lazy middleware
+- Observability: middleware metadata, inspect(), trace() hook for OTel
 
 ---
 
@@ -57,10 +58,33 @@ type MaybeArray<T> = T | T[];
 /** Scope level for middleware propagation */
 type Scope = "local" | "scoped" | "global";
 
-/** Internal middleware entry with scope annotation */
+/** Which method created a middleware entry */
+type MiddlewareType =
+  | "use" | "derive" | "decorate" | "guard" | "branch"
+  | "route" | "fork" | "tap" | "lazy" | "group" | "extend" | "on";
+
+/** Read-only projection of a middleware entry for inspect()/trace() */
+interface MiddlewareInfo {
+  index: number;
+  type: MiddlewareType;
+  name?: string;
+  scope: Scope;
+  plugin?: string;  // which plugin contributed this (from extend)
+}
+
+/** Trace callback invoked on middleware enter; returns cleanup called on exit */
+type TraceHandler = (
+  entry: MiddlewareInfo,
+  context: any,
+) => ((error?: unknown) => void) | void;
+
+/** Internal middleware entry with scope annotation and metadata */
 interface ScopedMiddleware<T> {
   fn: Middleware<T>;
   scope: Scope;
+  type: MiddlewareType;   // which method created this entry
+  name?: string;           // original handler/predicate/factory function name
+  plugin?: string;         // source plugin name (set by extend)
 }
 
 /** Composer constructor options */
@@ -517,6 +541,80 @@ run(context: TIn, next?: Next): Promise<void>
 
 - Shorthand for `this.compose()(context, next ?? noopNext)`
 
+### 3.5 Observability Methods
+
+#### `inspect()` — read-only middleware metadata
+
+```typescript
+inspect(): MiddlewareInfo[]
+```
+
+- Returns an array of `MiddlewareInfo` objects, one per registered middleware
+- Each entry contains `{ index, type, name, scope }` and optionally `plugin`
+- Order matches registration order (same as `["~"].middlewares`)
+- `name` is omitted when the original handler was anonymous
+- `plugin` is present only for middleware that came from an `extend()` call on a named plugin
+- Read-only projection — does not modify internal state
+
+**Usage:**
+```typescript
+const app = new Composer()
+  .derive(function getUser() { return { user: "alice" }; })
+  .guard(function isAdmin() { return true; })
+  .use(async function handleRequest(_, next) { return next(); });
+
+app.inspect();
+// [
+//   { index: 0, type: "derive", name: "getUser", scope: "local" },
+//   { index: 1, type: "guard", name: "isAdmin", scope: "local" },
+//   { index: 2, type: "use", name: "handleRequest", scope: "local" },
+// ]
+```
+
+#### `trace(handler)` — opt-in instrumentation hook
+
+```typescript
+trace(handler: TraceHandler): this
+```
+
+- Sets a `TraceHandler` callback on `["~"].tracer`
+- At `compose()` time, if tracer is set, each middleware is wrapped with enter/exit instrumentation
+- **Zero overhead when not used** — when `["~"].tracer` is `undefined`, middleware functions are passed directly to `compose()` with no wrapping
+- Calling `trace()` invalidates the compilation cache (dirty flag)
+
+**TraceHandler lifecycle:**
+1. Before each middleware executes, `handler(info, context)` is called
+2. The handler may return a cleanup function `(error?: unknown) => void`
+3. After middleware completes successfully, cleanup is called with no arguments
+4. If middleware throws, cleanup is called with the error, then the error is re-thrown (propagates to `onError`)
+
+#### Function naming convention
+
+Wrapper functions created by Composer methods are named via `Object.defineProperty(fn, 'name')` for meaningful stack traces. Format: `type:handlerName`.
+
+| Method | `type` | `name` source | Example `fn.name` |
+|--------|--------|---------------|-------------------|
+| `use()` | `"use"` | `fn.name` (NOT renamed) | `myHandler` |
+| `derive()` | `"derive"` | `handler.name` | `derive:getUser` |
+| `decorate()` | `"decorate"` | — | `decorate` |
+| `guard()` | `"guard"` | `predicate.name` | `guard:isAdmin` |
+| `branch()` | `"branch"` | `predicate.name` | `branch:isLoggedIn` |
+| `route()` | `"route"` | `router.name` | `route:getRole` |
+| `fork()` | `"fork"` | — | `fork` |
+| `tap()` | `"tap"` | — | `tap` |
+| `lazy()` | `"lazy"` | `factory.name` | `lazy:loadMiddleware` |
+| `group()` | `"group"` | — | `group` |
+| `extend()` (isolation) | `"extend"` | `other["~"].name` | `extend:auth` |
+| `on()` | `"on"` | event name(s) joined by `\|` | `on:message` |
+
+**Plugin tracking in `extend()`:** All middleware entries copied from a named plugin get `plugin: other["~"].name`. Scoped/global entries preserve their original `type` and `name`. The `plugin` field propagates transitively — if plugin B extended plugin A (global), A's middleware carries `plugin: "A"` when the app extends B.
+
+**`nameMiddleware()` utility** (internal, not exported):
+```typescript
+function nameMiddleware<T extends Function>(fn: T, type: string, handlerName?: string): T
+```
+Sets `fn.name` to `type:handlerName` (or just `type` if no handler name). Used by all wrapper-creating methods.
+
 ---
 
 ## 4. `createComposer()` — Factory with Events (`factory.ts`)
@@ -583,11 +681,15 @@ class EventComposer<
 ```typescript
 on(event, handler) {
   const events = Array.isArray(event) ? event : [event];
-  return this.use((ctx, next) => {
-    if (events.includes(this.config.discriminator(ctx)))
-      return handler(ctx, next);
+  const eventLabel = events.join("|");
+  const mw = (ctx, next) => {
+    if (events.includes(config.discriminator(ctx))) return handler(ctx, next);
     return next();
-  });
+  };
+  nameMiddleware(mw, "on", eventLabel);
+  this["~"].middlewares.push({ fn: mw, scope: "local", type: "on", name: eventLabel });
+  this.invalidate();
+  return this;
 }
 ```
 
@@ -626,7 +728,8 @@ const app = new Composer()
 
 EventComposers created via factory support all base Composer methods:
 `derive()`, `guard()`, `branch()`, `route()`, `fork()`, `tap()`, `lazy()`,
-`onError()`, `group()`, `extend()`, `as()`, `compose()`, `run()`.
+`onError()`, `group()`, `extend()`, `as()`, `compose()`, `run()`,
+`inspect()`, `trace()`.
 
 When `.extend()`-ing another EventComposer, they must share the same factory
 (same discriminator and event map).
@@ -747,6 +850,9 @@ export type {
   LazyFactory,
   MaybeArray,
   Scope,
+  MiddlewareType,
+  MiddlewareInfo,
+  TraceHandler,
   ComposerOptions,
 } from "./types";
 
@@ -1073,6 +1179,51 @@ class Bot<Errors, Derives> {
 }
 ```
 
+### 8.9 Observability / OTel integration
+
+```typescript
+import { Composer } from "@gramio/composer";
+
+const app = new Composer<{ request: Request }>()
+  .derive(async function getUser(ctx) { return { user: "alice" }; })
+  .guard(function isAdmin() { return true; })
+  .use(async function handleRequest(ctx, next) { return next(); })
+  .trace((entry, ctx) => {
+    const span = tracer.startSpan(`${entry.type}:${entry.name || "anonymous"}`);
+    span.setAttributes({
+      "middleware.index": entry.index,
+      "middleware.scope": entry.scope,
+      ...(entry.plugin && { "middleware.plugin": entry.plugin }),
+    });
+    return (error) => {
+      if (error) span.recordException(error);
+      span.end();
+    };
+  });
+
+// inspect() — read-only metadata
+app.inspect();
+// [
+//   { index: 0, type: "derive", name: "getUser", scope: "local" },
+//   { index: 1, type: "guard", name: "isAdmin", scope: "local" },
+//   { index: 2, type: "use", name: "handleRequest", scope: "local" },
+// ]
+
+// With plugins — plugin field shows origin
+const auth = new Composer({ name: "auth" })
+  .derive(async function getUser() { return { user: "alice" }; })
+  .as("scoped");
+const app2 = new Composer()
+  .extend(auth)
+  .use(async function handleRequest(_, next) { return next(); });
+
+app2.inspect();
+// [
+//   { index: 0, type: "derive", name: "getUser", scope: "local", plugin: "auth" },
+//   { index: 1, type: "use", name: "handleRequest", scope: "local" },
+// ]
+```
+
 ---
 
 ## 9. Implementation Notes
@@ -1126,12 +1277,15 @@ class Composer {
 
 ### 9.2 Scope storage
 
-Each middleware entry stores its scope:
+Each middleware entry stores its scope and observability metadata:
 
 ```typescript
 interface ScopedMiddleware<T> {
   fn: Middleware<T>;
-  scope: Scope;  // "local" | "scoped" | "global"
+  scope: Scope;          // "local" | "scoped" | "global"
+  type: MiddlewareType;  // which method created this entry
+  name?: string;         // original handler function name
+  plugin?: string;       // source plugin name (set by extend)
 }
 ```
 
@@ -1289,3 +1443,16 @@ private createIsolatedMiddleware(middlewares: ScopedMiddleware[]): Middleware {
 - [ ] `EventQueue.stop()` — waits for pending, respects timeout
 - [ ] `EventQueue.onIdle()` — resolves when idle
 - [ ] Cross-runtime: no setImmediate, no Node-specific APIs
+- [ ] `Composer.inspect()` — returns correct type, name, scope for each entry
+- [ ] `Composer.inspect()` — order matches registration order
+- [ ] `Composer.inspect()` — shows plugin field for extended middleware
+- [ ] `Composer.inspect()` — extend() scoped entries preserve original type/name
+- [ ] `Composer.trace()` — handler called per-middleware in order
+- [ ] `Composer.trace()` — receives correct MiddlewareInfo
+- [ ] `Composer.trace()` — cleanup called after middleware completes
+- [ ] `Composer.trace()` — cleanup receives error when middleware throws
+- [ ] `Composer.trace()` — error still propagates to onError
+- [ ] `Composer.trace()` — no wrapping when trace() not called (zero overhead)
+- [ ] Function naming — each method's wrapper has correct fn.name
+- [ ] Function naming — use() does NOT rename user functions
+- [ ] Stack traces — error in derive/use shows handler name in stack
