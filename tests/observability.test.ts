@@ -543,51 +543,55 @@ describe("Observability", () => {
 	// ─── Stack Traces ───
 
 	describe("stack traces", () => {
-		it("original function name visible when derive handler throws", async () => {
-			let capturedFrames: string[] = [];
-			let error: any;
+		it("internal frames are stripped — only user code remains", async () => {
+			let capturedStack = "";
 
 			const app = new Composer()
 				.derive(function getUser(): never {
 					throw new Error("db fail");
 				})
 				.onError(({ error }) => {
-					capturedFrames = extractFrameNames((error as Error).stack || "");
-					console.error(error);
-					error = error;
+					capturedStack = (error as Error).stack || "";
 					return "handled";
 				});
 
 			await app.run({});
 
-			// The original function name "getUser" appears in the stack trace
-			// because it was declared with `function getUser()`.
-			// The derive wrapper may show as <anonymous> in Bun/JSC
-			// (Object.defineProperty sets .name but JSC uses parse-time names for
-			// cross-file stack frames). The .name property IS correct for inspect()/trace().
-			expect(capturedFrames).toContain("getUser");
-			expect(error).toMatchInlineSnapshot(`undefined`);
+			const frames = extractFrameNames(capturedStack);
+
+			// User's function name is preserved
+			expect(frames).toContain("getUser");
+
+			// Library internals are stripped
+			expect(capturedStack).not.toContain("dispatch");
+			expect(capturedStack).not.toContain("compose.ts");
+			expect(capturedStack).not.toContain("composer.ts");
+			expect(capturedStack).toMatchInlineSnapshot(`
+			  "Error: db fail
+			      at getUser (Z:\\PROJECTS\\GRAMIO\\composer\\tests\\observability.test.ts:551:16)
+			      at <anonymous> (Z:\\PROJECTS\\GRAMIO\\composer\\tests\\observability.test.ts:558:14)"
+			`);
 		});
 
-		it("named use() handler name appears in error stack", async () => {
-			let capturedFrames: string[] = [];
+		it("named use() handler name survives in cleaned stack", async () => {
+			let capturedStack = "";
 
 			const app = new Composer()
 				.use(async function handleRequest() {
 					throw new Error("fail");
 				})
 				.onError(({ error }) => {
-					capturedFrames = extractFrameNames((error as Error).stack || "");
+					capturedStack = (error as Error).stack || "";
 					return "handled";
 				});
 
 			await app.run({});
 
-			// use() does NOT rename — original function name survives in the stack
-			expect(capturedFrames).toContain("handleRequest");
+			expect(extractFrameNames(capturedStack)).toContain("handleRequest");
+			expect(capturedStack).not.toContain("composer.ts");
 		});
 
-		it("trace() provides full context even when stack traces are opaque", async () => {
+		it("trace() provides full context even with clean stacks", async () => {
 			const traceLog: { type: string; name?: string; error?: boolean }[] = [];
 
 			const plugin = new Composer({ name: "auth" })
@@ -615,7 +619,7 @@ describe("Observability", () => {
 			await app.run({});
 
 			// trace() captures both enter AND error exit with full metadata —
-			// this is the reliable observability path regardless of engine stack behavior
+			// the reliable observability path regardless of stack trace cleaning
 			expect(traceLog).toMatchInlineSnapshot(`
 			  [
 			    {

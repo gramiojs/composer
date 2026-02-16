@@ -12,7 +12,7 @@ src/
   composer.ts   — Composer class (core)
   factory.ts    — createComposer() factory (adds .on() event support)
   queue.ts      — EventQueue (concurrent processing with graceful shutdown)
-  utils.ts      — noopNext, skip, stop, nameMiddleware utilities
+  utils.ts      — noopNext, skip, stop, nameMiddleware, cleanErrorStack utilities
   index.ts      — barrel exports
 ```
 
@@ -33,6 +33,7 @@ src/
 - **Observability** — every `ScopedMiddleware` carries `type` (which method created it) and `name` (original handler function name). Wrapper functions are named via `Object.defineProperty(fn, 'name')` for meaningful stack traces. Format: `type:handlerName` (e.g. `derive:getUser`, `guard:isAdmin`, `on:message`).
 - **trace()** — opt-in hook for external instrumentation. Sets a `TraceHandler` callback. At `compose()` time, if tracer is set, each middleware is wrapped with enter/exit instrumentation. Zero overhead when not used.
 - **inspect()** — returns `MiddlewareInfo[]` with `{ index, type, name, scope, plugin? }` for each registered middleware. Read-only projection of internal state.
+- **Clean stack traces** — `compose()` error handler strips library-internal frames from `error.stack` before passing to `onError` handlers and `console.error`. Uses `import.meta.url` to detect the library's source directory at load time. Users only see their own code in stack traces.
 
 More about it - @docs/SPEC.md
 

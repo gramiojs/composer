@@ -1,5 +1,5 @@
 import { compose } from "./compose.ts";
-import { nameMiddleware, noopNext } from "./utils.ts";
+import { cleanErrorStack, nameMiddleware, noopNext } from "./utils.ts";
 import type {
 	ComposedMiddleware,
 	ComposerOptions,
@@ -487,6 +487,7 @@ export class Composer<
 				try {
 					return await chain(ctx, next);
 				} catch (error) {
+					cleanErrorStack(error);
 					let kind: string | undefined;
 					for (const [k, ErrorClass] of Object.entries(errorsDefinitions)) {
 						if (error instanceof ErrorClass) {

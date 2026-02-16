@@ -615,6 +615,34 @@ function nameMiddleware<T extends Function>(fn: T, type: string, handlerName?: s
 ```
 Sets `fn.name` to `type:handlerName` (or just `type` if no handler name). Used by all wrapper-creating methods.
 
+#### Clean stack traces
+
+The `compose()` error handler automatically strips library-internal frames from `error.stack` before passing errors to `onError` handlers and `console.error`. Users only see their own code in stack traces.
+
+**How it works:**
+1. At module load time, `import.meta.url` is used to detect the library's source directory
+2. When an error is caught in `compose()`, `cleanErrorStack(error)` removes any stack frame that originates from the library directory
+3. The error with cleaned stack is then passed to `onError` handlers
+
+**Before (raw):**
+```
+Error: db fail
+    at getUser (app.ts:12:16)
+    at <anonymous> (composer.ts:124:25)
+    at dispatch (compose.ts:28:28)
+    at <anonymous> (composer.ts:488:19)
+    at app.run (app.ts:20:14)
+```
+
+**After (cleaned):**
+```
+Error: db fail
+    at getUser (app.ts:12:16)
+    at app.run (app.ts:20:14)
+```
+
+`cleanErrorStack()` is internal and not exported. It is cross-runtime compatible (works in Bun, Node.js, and Deno).
+
 ---
 
 ## 4. `createComposer()` — Factory with Events (`factory.ts`)
