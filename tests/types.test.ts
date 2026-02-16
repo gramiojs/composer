@@ -183,4 +183,79 @@ describe("EventComposer types", () => {
 			return next();
 		});
 	});
+
+	// ─── Per-event derive types ───
+
+	it("derive(event, handler) — per-event derive visible only in matching .on()", () => {
+		const app = new EC()
+			.derive("message", () => ({ parsed: "hello" }));
+
+		// .on("message") sees the per-event derive
+		app.on("message", (ctx, next) => {
+			expectTypeOf(ctx).toMatchTypeOf<{ text?: string; parsed: string }>();
+			return next();
+		});
+
+		// .on("callback_query") does NOT see message-specific derive
+		app.on("callback_query", (ctx, next) => {
+			expectTypeOf(ctx).toMatchTypeOf<{ data?: string }>();
+			// @ts-expect-error — parsed is NOT on callback_query context
+			ctx.parsed;
+			return next();
+		});
+	});
+
+	it("derive(event) accumulates per-event derives", () => {
+		new EC()
+			.derive("message", () => ({ a: 1 }))
+			.derive("message", () => ({ b: "two" }))
+			.on("message", (ctx, next) => {
+				expectTypeOf(ctx).toMatchTypeOf<{ a: number; b: string; text?: string }>();
+				return next();
+			});
+	});
+
+	it("global derive + per-event derive both visible in .on()", () => {
+		new EC()
+			.derive(() => ({ global: true }))
+			.derive("message", () => ({ perEvent: 42 }))
+			.on("message", (ctx, next) => {
+				expectTypeOf(ctx).toMatchTypeOf<{ global: boolean; perEvent: number; text?: string }>();
+				return next();
+			});
+	});
+
+	it("per-event derive does NOT pollute global TOut (.use())", () => {
+		const app = new EC()
+			.derive("message", () => ({ messageOnly: true }));
+
+		// .use() sees TOut which should NOT include per-event derives
+		app.use((ctx, next) => {
+			// @ts-expect-error — messageOnly is per-event, not global
+			ctx.messageOnly;
+			return next();
+		});
+	});
+
+	it("extend() merges per-event derives from another EventComposer", () => {
+		const plugin = new EC({ name: "msg-plugin" })
+			.derive("message", () => ({ fromPlugin: "yes" }))
+			.as("scoped");
+
+		new EC()
+			.extend(plugin)
+			.on("message", (ctx, next) => {
+				expectTypeOf(ctx).toMatchTypeOf<{ fromPlugin: string; text?: string }>();
+				return next();
+			});
+	});
+
+	it("Derives phantom type accessible via ['~']['Derives']", () => {
+		const app = new EC()
+			.derive("message", () => ({ x: 1 }))
+			.derive("callback_query", () => ({ y: "str" }));
+
+		type D = typeof app["~"]["Derives"];
+		expectTypeOf<D>().toMatchTypeOf<{ message: { x: number }; callback_query: { y: string } }>();
+	});
 });

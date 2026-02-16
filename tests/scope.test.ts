@@ -35,7 +35,7 @@ describe("Scope system", () => {
 			const plugin = new Composer()
 				.derive(() => ({ secret: 42 }))
 				.use((ctx, next) => {
-					expect((ctx as any).secret).toBe(42);
+					expect(ctx.secret).toBe(42);
 					return next();
 				});
 
@@ -43,7 +43,7 @@ describe("Scope system", () => {
 			const app = new Composer()
 				.extend(plugin)
 				.use((ctx, next) => {
-					parentSaw = (ctx as any).secret;
+					parentSaw = ctx.secret;
 					return next();
 				});
 

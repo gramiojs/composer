@@ -14,72 +14,89 @@ import type {
 	ScopedMiddleware,
 } from "./types.ts";
 
-/** EventComposer interface — Composer + .on() with all chainable methods returning EventComposer */
+/**
+ * Distributes over E to create a correlated union:
+ * each event branch gets its own TEventMap entry + per-event derives.
+ *
+ * Single event → simple intersection.
+ * Array of events → discriminated union where each branch has correct derives.
+ */
+type ResolveEventCtx<
+	TOut extends object,
+	TEventMap extends Record<string, any>,
+	TDerives extends Record<string, object>,
+	E extends string,
+> = E extends any
+	? TOut
+		& (E extends keyof TEventMap ? TEventMap[E] : {})
+		& (E extends keyof TDerives ? TDerives[E] : {})
+	: never;
+
+/** EventComposer interface — Composer + .on() + per-event derive tracking */
 export interface EventComposer<
 	TBase extends object,
 	TEventMap extends Record<string, TBase>,
 	TIn extends TBase = TBase,
 	TOut extends TIn = TIn,
 	TExposed extends object = {},
+	TDerives extends Record<string, object> = {},
 > {
 	on<E extends keyof TEventMap & string>(
 		event: MaybeArray<E>,
-		handler: Middleware<TOut & TEventMap[E]>,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed>;
+		handler: Middleware<ResolveEventCtx<TOut, TEventMap, TDerives, E>>,
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
 
 	use(
 		...middleware: Middleware<TOut>[]
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed>;
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
 
+	// Global derive
 	derive<D extends object>(
 		handler: DeriveHandler<TOut, D>,
-	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed>;
+	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed, TDerives>;
 	derive<D extends object>(
 		handler: DeriveHandler<TOut, D>,
 		options: { as: "scoped" | "global" },
-	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed & D>;
+	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed & D, TDerives>;
+
+	// Event-specific derive — adds to TDerives[E], NOT to global TOut
 	derive<E extends keyof TEventMap & string, D extends object>(
 		event: MaybeArray<E>,
-		handler: DeriveHandler<TOut & TEventMap[E], D>,
-	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed>;
-	derive<E extends keyof TEventMap & string, D extends object>(
-		event: MaybeArray<E>,
-		handler: DeriveHandler<TOut & TEventMap[E], D>,
-		options: { as: "scoped" | "global" },
-	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed & D>;
+		handler: DeriveHandler<ResolveEventCtx<TOut, TEventMap, TDerives, E>, D>,
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives & { [K in E]: D }>;
 
 	guard<S extends TOut>(
 		predicate: ((context: TOut) => context is S) | ((context: TOut) => boolean | Promise<boolean>),
 		...middleware: Middleware<any>[]
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed>;
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
 
 	branch(
 		predicate: ((context: TOut) => boolean | Promise<boolean>) | boolean,
 		onTrue: Middleware<TOut>,
 		onFalse?: Middleware<TOut>,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed>;
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
 
 	route<K extends string>(
 		router: (context: TOut) => K | Promise<K>,
 		cases: Partial<Record<K, Middleware<TOut>>>,
 		fallback?: Middleware<TOut>,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed>;
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
 
 	fork(
 		...middleware: Middleware<TOut>[]
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed>;
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
 
 	tap(
 		...middleware: Middleware<TOut>[]
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed>;
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
 
 	lazy(
 		factory: LazyFactory<TOut>,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed>;
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
 
 	onError(
 		handler: ErrorHandler<TOut>,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed>;
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
 
 	error(
 		kind: string,
@@ -88,20 +105,26 @@ export interface EventComposer<
 
 	as(
 		scope: "scoped" | "global",
-	): EventComposer<TBase, TEventMap, TIn, TOut, TOut>;
+	): EventComposer<TBase, TEventMap, TIn, TOut, TOut, TDerives>;
 
 	group(
 		fn: (composer: Composer<TOut, TOut, {}>) => void,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed>;
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
 
+	// Extend another EventComposer — merges TDerives
+	extend<UIn extends TBase, UOut extends UIn, UExposed extends object, UDerives extends Record<string, object>>(
+		other: EventComposer<TBase, TEventMap, UIn, UOut, UExposed, UDerives>,
+	): EventComposer<TBase, TEventMap, TIn, TOut & UExposed, TExposed, TDerives & UDerives>;
+
+	// Extend plain Composer — TDerives unchanged
 	extend<UIn extends object, UOut extends UIn, UExposed extends object>(
 		other: Composer<UIn, UOut, UExposed>,
-	): EventComposer<TBase, TEventMap, TIn, TOut & UExposed, TExposed>;
+	): EventComposer<TBase, TEventMap, TIn, TOut & UExposed, TExposed, TDerives>;
 
 	compose(): ComposedMiddleware<TIn>;
 	run(context: TIn, next?: Next): Promise<void>;
 
-	_: {
+	"~": {
 		middlewares: ScopedMiddleware<any>[];
 		extended: Set<string>;
 		compiled: ComposedMiddleware<any> | null;
@@ -111,8 +134,8 @@ export interface EventComposer<
 			string,
 			{ new (...args: any): any; prototype: Error }
 		>;
+		Derives: TDerives;
 	};
-	"~": EventComposer<TBase, TEventMap, TIn, TOut, TExposed>["_"];
 	invalidate(): void;
 }
 
@@ -124,9 +147,10 @@ export interface EventComposerConstructor<
 		TIn extends TBase = TBase,
 		TOut extends TIn = TIn,
 		TExposed extends object = {},
+		TDerives extends Record<string, object> = {},
 	>(
 		options?: ComposerOptions,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed>;
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
 }
 
 /**
@@ -167,12 +191,11 @@ export function createComposer<
 				return super.derive(eventOrHandler, handlerOrOptions);
 			}
 
-			// derive(event, handler) or derive(event, handler, options)
+			// derive(event, handler) — event-specific, always local scope
 			const events = Array.isArray(eventOrHandler)
 				? eventOrHandler
 				: [eventOrHandler];
 			const handler = handlerOrOptions;
-			const options = maybeOptions;
 
 			const mw: Middleware<any> = async (ctx, next) => {
 				if (events.includes(config.discriminator(ctx))) {
@@ -181,8 +204,7 @@ export function createComposer<
 				return next();
 			};
 
-			const scope: Scope = options?.as ?? "local";
-			this._.middlewares.push({ fn: mw, scope });
+			this["~"].middlewares.push({ fn: mw, scope: "local" });
 			this.invalidate();
 			return this;
 		}
