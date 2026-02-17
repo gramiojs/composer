@@ -657,13 +657,20 @@ The base `Composer` is event-agnostic. The factory adds event support.
 ```typescript
 function createComposer<
   TBase extends object,
-  TEventMap extends Record<string, TBase> = {}
+  TEventMap extends Record<string, TBase> = {},
+  TMethods extends Record<string, (...args: any[]) => any> = {},
 >(config: {
   /** Runtime: extract event type string from context */
   discriminator: (context: TBase) => string;
+
+  /** Phantom field for TEventMap inference (see eventTypes()) */
+  types?: TEventMap;
+
+  /** Custom methods added to the EventComposer prototype */
+  methods?: TMethods & ThisType<EventComposer<TBase, TEventMap, TBase, TBase, {}, {}>>;
 }): {
-  /** Configured Composer class with .on() support */
-  Composer: EventComposerConstructor<TBase, TEventMap>;
+  /** Configured Composer class with .on() support + custom methods */
+  Composer: EventComposerConstructor<TBase, TEventMap, TMethods>;
 
   /** Standalone compose function (re-export) */
   compose: typeof compose;
@@ -671,6 +678,58 @@ function createComposer<
   /** EventQueue class (re-export) */
   EventQueue: typeof EventQueue;
 }
+```
+
+### `types` option + `eventTypes()` — phantom type inference
+
+TypeScript cannot partially infer type arguments: when `TBase` and `TEventMap` are explicit (`createComposer<BaseCtx, EventMap>(...)`), `TMethods` defaults to `{}`. The `types` phantom field solves this by providing an inference site for `TEventMap`, so **all** generics are inferred from the config object:
+
+```typescript
+import { createComposer, eventTypes } from "@gramio/composer";
+
+// eventTypes<T>() returns undefined at runtime — exists purely for type inference.
+const { Composer } = createComposer({
+  discriminator: (ctx: BaseCtx) => ctx.updateType,
+  types: eventTypes<EventMap>(),  // TEventMap inferred here
+  methods: { ... },               // TMethods inferred here
+});
+// TBase inferred from discriminator parameter type
+```
+
+When `types` is omitted, `TEventMap` defaults to `{}` (or can be set via explicit type parameters as before).
+
+### `methods` option — custom prototype methods
+
+Frameworks can inject domain-specific DX sugar (e.g. `hears`, `command`) directly onto the EventComposer prototype via the `methods` config.
+
+- Method bodies receive `this` typed as `EventComposer<TBase, TEventMap, ...>` via `ThisType`, giving access to `.on()`, `.use()`, `.derive()`, etc.
+- Methods are added via `Object.defineProperty` (non-enumerable, matching class method behavior)
+- A runtime conflict check throws if a custom method name collides with a built-in method (e.g. `on`, `use`, `derive`)
+- When `methods` is omitted, `TMethods = {}` — no impact on existing usage
+
+```typescript
+const { Composer } = createComposer({
+  discriminator: (ctx: BaseCtx) => ctx.updateType,
+  types: eventTypes<EventMap>(),
+  methods: {
+    hears(trigger: RegExp | string, handler: (ctx: any) => unknown) {
+      return this.on("message", (context, next) => {
+        const text = context.text;
+        if (
+          (typeof trigger === "string" && text === trigger) ||
+          (trigger instanceof RegExp && text && trigger.test(text))
+        ) {
+          return handler(context);
+        }
+        return next();
+      });
+    },
+  },
+});
+
+const bot = new Composer();
+bot.hears(/hello/, handler);           // custom method works
+bot.on("message", h).hears(/hi/, h2);  // chaining works (runtime)
 ```
 
 ### `EventComposer` — returned by factory
@@ -866,7 +925,7 @@ const stop: Middleware<any>;
 // Core
 export { compose } from "./compose";
 export { Composer, type RouteHandler, type RouteBuilder } from "./composer";
-export { createComposer } from "./factory";
+export { createComposer, eventTypes } from "./factory";
 export { EventQueue } from "./queue";
 
 // Types
@@ -1160,15 +1219,31 @@ import { createComposer, EventQueue } from "@gramio/composer";
 import type { TelegramUpdate } from "@gramio/types";
 import { contextsMappings, type UpdateName } from "@gramio/contexts";
 
-// Create the framework's Composer
-const { Composer: BaseComposer } = createComposer<
-  Context<AnyBot>,
-  ContextEventMap  // { message: MessageContext, callback_query: CallbackQueryContext, ... }
->({
-  discriminator: (ctx) => ctx.updateType,
+// Create the framework's Composer with custom methods
+const { Composer: BaseComposer } = createComposer({
+  discriminator: (ctx: Context<AnyBot>) => ctx.updateType,
+  types: eventTypes<ContextEventMap>(),  // { message: MessageContext, ... }
+  methods: {
+    hears(trigger, handler) {
+      return this.on("message", (context, next) => {
+        const text = context.text;
+        if (
+          (typeof trigger === "string" && text === trigger) ||
+          (trigger instanceof RegExp && text && trigger.test(text))
+        ) return handler(context);
+        return next();
+      });
+    },
+    command(name, handler) {
+      return this.on("message", (context, next) => {
+        if (context.text?.startsWith(`/${name}`)) return handler(context);
+        return next();
+      });
+    },
+  },
 });
 
-// GramIO's Bot extends the configured Composer
+// GramIO's Bot wraps the configured Composer
 class Bot<Errors, Derives> {
   private composer = new BaseComposer();
   private queue: EventQueue<TelegramUpdate>;
@@ -1177,14 +1252,9 @@ class Bot<Errors, Derives> {
     this.queue = new EventQueue((update) => this.handleUpdate(update));
   }
 
-  // Thin wrappers over Composer methods
-  on(event, handler)      { this.composer.on(event, handler); return this; }
-  use(handler)             { this.composer.use(handler); return this; }
-  derive(handler)          { this.composer.derive(handler); return this; }
-
-  // GramIO-specific methods (NOT in composer)
-  command(name, handler)   { /* uses .on("message", ...) + command parsing */ }
-  hears(trigger, handler)  { /* uses .on("message", ...) + text matching */ }
+  // Domain methods are now first-class on the Composer:
+  // this.composer.hears(/hello/, handler);
+  // this.composer.command("start", handler);
 
   // GramIO Plugin system (wraps composer.extend + hooks + errors)
   extend(plugin) {

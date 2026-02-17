@@ -172,6 +172,7 @@ export interface EventComposer<
 export interface EventComposerConstructor<
 	TBase extends object,
 	TEventMap extends Record<string, TBase>,
+	TMethods extends Record<string, (...args: any[]) => any> = {},
 > {
 	new <
 		TIn extends TBase = TBase,
@@ -180,7 +181,27 @@ export interface EventComposerConstructor<
 		TDerives extends Record<string, object> = {},
 	>(
 		options?: ComposerOptions,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives> & TMethods;
+}
+
+/**
+ * Phantom type carrier for event map inference.
+ * Returns `undefined` at runtime — exists purely for type-level inference
+ * so that `TEventMap` can be inferred from the `types` config field.
+ *
+ * @example
+ * ```ts
+ * const { Composer } = createComposer({
+ *   discriminator: (ctx: BaseCtx) => ctx.updateType,
+ *   types: eventTypes<EventMap>(),
+ *   methods: { hears(trigger) { return this.on("message", ...); } },
+ * });
+ * ```
+ */
+export function eventTypes<
+	TEventMap extends Record<string, any>,
+>(): TEventMap {
+	return undefined as any;
 }
 
 /**
@@ -189,10 +210,13 @@ export interface EventComposerConstructor<
 export function createComposer<
 	TBase extends object,
 	TEventMap extends Record<string, TBase> = {},
+	TMethods extends Record<string, (...args: any[]) => any> = {},
 >(config: {
 	discriminator: (context: TBase) => string;
+	types?: TEventMap;
+	methods?: TMethods & ThisType<EventComposer<TBase, TEventMap, TBase, TBase, {}, {}>>;
 }): {
-	Composer: EventComposerConstructor<TBase, TEventMap>;
+	Composer: EventComposerConstructor<TBase, TEventMap, TMethods>;
 	compose: typeof compose;
 	EventQueue: typeof EventQueue;
 } {
@@ -245,6 +269,20 @@ export function createComposer<
 			this["~"].middlewares.push({ fn: mw, scope: "local", type: "derive", name: deriveName });
 			this.invalidate();
 			return this;
+		}
+	}
+
+	if (config.methods) {
+		for (const [name, fn] of Object.entries(config.methods)) {
+			if (name in EventComposerImpl.prototype) {
+				throw new Error(`Custom method "${name}" conflicts with built-in method`);
+			}
+			Object.defineProperty(EventComposerImpl.prototype, name, {
+				value: fn,
+				writable: true,
+				configurable: true,
+				enumerable: false,
+			});
 		}
 	}
 

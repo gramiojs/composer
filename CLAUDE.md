@@ -34,8 +34,9 @@ src/
 - **trace()** — opt-in hook for external instrumentation. Sets a `TraceHandler` callback. At `compose()` time, if tracer is set, each middleware is wrapped with enter/exit instrumentation. Zero overhead when not used.
 - **inspect()** — returns `MiddlewareInfo[]` with `{ index, type, name, scope, plugin? }` for each registered middleware. Read-only projection of internal state.
 - **Clean stack traces** — `compose()` error handler strips library-internal frames from `error.stack` before passing to `onError` handlers and `console.error`. Uses `import.meta.url` to detect the library's source directory at load time. Users only see their own code in stack traces.
+- **Custom methods** — `createComposer` accepts `methods` config for framework-specific DX sugar (e.g. `hears`, `command`). Methods are added to prototype, typed via `ThisType`. Runtime conflict check prevents accidental override of built-in methods. Phantom `types` field + `eventTypes<TEventMap>()` helper enables full type inference without explicit type parameters.
 
-More about it - @docs/SPEC.md
+More about it - docs/SPEC.md
 
 ## Commands
 
