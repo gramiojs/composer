@@ -210,22 +210,48 @@ describe("createComposer() custom methods", () => {
 			},
 		});
 
-		const app = new Composer();
-		// Runtime chaining works — .hears() returns `this` (the composer instance).
-		// Type-level: .hears() return type is EventComposer (without TMethods),
-		// so subsequent .on() is typed but .hears() chain would need declaration merging.
-		(app as any)
-			.hears("hello", (ctx: any, next: any) => {
+		const app = new Composer()
+			.hears("hello", (_ctx, next) => {
 				calls.push("hears");
 				return next();
 			})
-			.on("message", (ctx: any, next: any) => {
+			.on("message", (_ctx, next) => {
 				calls.push("on:message");
 				return next();
 			});
 
 		await app.run({ updateType: "message", text: "hello" } as any);
 		expect(calls).toEqual(["hears", "on:message"]);
+	});
+
+	it("custom methods survive derive() chaining", async () => {
+		const calls: string[] = [];
+
+		const { Composer } = createComposer({
+			discriminator: (ctx: BaseCtx) => ctx.updateType,
+			types: eventTypes<EventMap>(),
+			methods: {
+				hears(trigger: string, handler: Middleware<MessageCtx>) {
+					return this.on("message", (context, next) => {
+						if (context.text === trigger) {
+							return handler(context, next);
+						}
+						return next();
+					});
+				},
+			},
+		});
+
+		// .derive() changes generics but TMethods is preserved via 7th generic
+		const app = new Composer()
+			.derive(() => ({ timestamp: Date.now() }))
+			.hears("hello", (_ctx, next) => {
+				calls.push("hears-after-derive");
+				return next();
+			});
+
+		await app.run({ updateType: "message", text: "hello" } as any);
+		expect(calls).toEqual(["hears-after-derive"]);
 	});
 
 	it("multiple custom methods", () => {

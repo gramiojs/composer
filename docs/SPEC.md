@@ -729,8 +729,10 @@ const { Composer } = createComposer({
 
 const bot = new Composer();
 bot.hears(/hello/, handler);           // custom method works
-bot.on("message", h).hears(/hi/, h2);  // chaining works (runtime)
+bot.on("message", h).hears(/hi/, h2);  // chaining works — polymorphic `this` preserves TMethods
 ```
+
+**Chaining behavior:** `TMethods` is carried as a 7th generic on `EventComposer` and preserved through **all** method chains — both `this`-returning methods (`on`, `use`, `guard`, etc.) and generic-modifying methods (`derive`, `decorate`, `as`, `when`, `extend`). Custom methods can also call each other via `this` inside method bodies.
 
 ### `EventComposer` — returned by factory
 

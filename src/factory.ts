@@ -35,7 +35,7 @@ type ResolveEventCtx<
 		& (E extends keyof TDerives ? TDerives[E] : {})
 	: never;
 
-/** EventComposer interface — Composer + .on() + per-event derive tracking */
+/** EventComposer interface — Composer + .on() + per-event derive tracking + custom methods */
 export interface EventComposer<
 	TBase extends object,
 	TEventMap extends Record<string, TBase>,
@@ -43,108 +43,111 @@ export interface EventComposer<
 	TOut extends TIn = TIn,
 	TExposed extends object = {},
 	TDerives extends Record<string, object> = {},
+	TMethods extends Record<string, (...args: any[]) => any> = {},
 > {
+	// --- Methods that preserve generics → return `this` (keeps TMethods in chain) ---
+
 	on<E extends keyof TEventMap & string>(
 		event: MaybeArray<E>,
 		handler: Middleware<ResolveEventCtx<TOut, TEventMap, TDerives, E>>,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
-
-	decorate<D extends object>(
-		values: D,
-	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed, TDerives>;
-	decorate<D extends object>(
-		values: D,
-		options: { as: "scoped" | "global" },
-	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed & D, TDerives>;
+	): this;
 
 	use(
 		...middleware: Middleware<TOut>[]
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
-
-	// Global derive
-	derive<D extends object>(
-		handler: DeriveHandler<TOut, D>,
-	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed, TDerives>;
-	derive<D extends object>(
-		handler: DeriveHandler<TOut, D>,
-		options: { as: "scoped" | "global" },
-	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed & D, TDerives>;
-
-	// Event-specific derive — adds to TDerives[E], NOT to global TOut
-	derive<E extends keyof TEventMap & string, D extends object>(
-		event: MaybeArray<E>,
-		handler: DeriveHandler<ResolveEventCtx<TOut, TEventMap, TDerives, E>, D>,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives & { [K in E]: D }>;
+	): this;
 
 	guard<S extends TOut>(
 		predicate: ((context: TOut) => context is S) | ((context: TOut) => boolean | Promise<boolean>),
 		...middleware: Middleware<any>[]
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
+	): this;
 
 	branch(
 		predicate: ((context: TOut) => boolean | Promise<boolean>) | boolean,
 		onTrue: Middleware<TOut>,
 		onFalse?: Middleware<TOut>,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
+	): this;
 
 	route<K extends string>(
 		router: (context: TOut) => K | undefined | Promise<K | undefined>,
 		cases: Partial<Record<K, (composer: Composer<TOut, TOut, {}>) => Composer<any, any, any>>>,
 		fallback?: (composer: Composer<TOut, TOut, {}>) => Composer<any, any, any>,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
+	): this;
 	route<K extends string>(
 		router: (context: TOut) => K | undefined | Promise<K | undefined>,
 		builder: (route: RouteBuilder<TOut, K>) => void,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
+	): this;
 	route<K extends string>(
 		router: (context: TOut) => K | undefined | Promise<K | undefined>,
 		cases: Partial<Record<K, Middleware<TOut> | Middleware<TOut>[] | Composer<any, any, any>>>,
 		fallback?: Middleware<TOut> | Middleware<TOut>[] | Composer<any, any, any>,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
+	): this;
 
 	fork(
 		...middleware: Middleware<TOut>[]
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
+	): this;
 
 	tap(
 		...middleware: Middleware<TOut>[]
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
+	): this;
 
 	lazy(
 		factory: LazyFactory<TOut>,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
+	): this;
 
 	onError(
 		handler: ErrorHandler<TOut>,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
-
-	when<UOut extends TOut>(
-		condition: boolean,
-		fn: (composer: Composer<TOut, TOut, {}>) => Composer<TOut, UOut, any>,
-	): EventComposer<TBase, TEventMap, TIn, TOut & Partial<Omit<UOut, keyof TOut>>, TExposed, TDerives>;
+	): this;
 
 	error(
 		kind: string,
 		errorClass: { new (...args: any): any; prototype: Error },
 	): this;
 
-	as(
-		scope: "scoped" | "global",
-	): EventComposer<TBase, TEventMap, TIn, TOut, TOut, TDerives>;
-
 	group(
 		fn: (composer: Composer<TOut, TOut, {}>) => void,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives>;
+	): this;
+
+	// --- Methods that change generics → propagate TMethods via 7th generic ---
+
+	decorate<D extends object>(
+		values: D,
+	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed, TDerives, TMethods> & TMethods;
+	decorate<D extends object>(
+		values: D,
+		options: { as: "scoped" | "global" },
+	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed & D, TDerives, TMethods> & TMethods;
+
+	derive<D extends object>(
+		handler: DeriveHandler<TOut, D>,
+	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed, TDerives, TMethods> & TMethods;
+	derive<D extends object>(
+		handler: DeriveHandler<TOut, D>,
+		options: { as: "scoped" | "global" },
+	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed & D, TDerives, TMethods> & TMethods;
+	// Event-specific derive — adds to TDerives[E], NOT to global TOut
+	derive<E extends keyof TEventMap & string, D extends object>(
+		event: MaybeArray<E>,
+		handler: DeriveHandler<ResolveEventCtx<TOut, TEventMap, TDerives, E>, D>,
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives & { [K in E]: D }, TMethods> & TMethods;
+
+	when<UOut extends TOut>(
+		condition: boolean,
+		fn: (composer: Composer<TOut, TOut, {}>) => Composer<TOut, UOut, any>,
+	): EventComposer<TBase, TEventMap, TIn, TOut & Partial<Omit<UOut, keyof TOut>>, TExposed, TDerives, TMethods> & TMethods;
+
+	as(
+		scope: "scoped" | "global",
+	): EventComposer<TBase, TEventMap, TIn, TOut, TOut, TDerives, TMethods> & TMethods;
 
 	// Extend another EventComposer — merges TDerives
 	extend<UIn extends TBase, UOut extends UIn, UExposed extends object, UDerives extends Record<string, object>>(
-		other: EventComposer<TBase, TEventMap, UIn, UOut, UExposed, UDerives>,
-	): EventComposer<TBase, TEventMap, TIn, TOut & UExposed, TExposed, TDerives & UDerives>;
+		other: EventComposer<TBase, TEventMap, UIn, UOut, UExposed, UDerives, any>,
+	): EventComposer<TBase, TEventMap, TIn, TOut & UExposed, TExposed, TDerives & UDerives, TMethods> & TMethods;
 
 	// Extend plain Composer — TDerives unchanged
 	extend<UIn extends object, UOut extends UIn, UExposed extends object>(
 		other: Composer<UIn, UOut, UExposed>,
-	): EventComposer<TBase, TEventMap, TIn, TOut & UExposed, TExposed, TDerives>;
+	): EventComposer<TBase, TEventMap, TIn, TOut & UExposed, TExposed, TDerives, TMethods> & TMethods;
 
 	inspect(): MiddlewareInfo[];
 	trace(handler: TraceHandler): this;
@@ -181,7 +184,7 @@ export interface EventComposerConstructor<
 		TDerives extends Record<string, object> = {},
 	>(
 		options?: ComposerOptions,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives> & TMethods;
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives, TMethods> & TMethods;
 }
 
 /**
@@ -214,7 +217,7 @@ export function createComposer<
 >(config: {
 	discriminator: (context: TBase) => string;
 	types?: TEventMap;
-	methods?: TMethods & ThisType<EventComposer<TBase, TEventMap, TBase, TBase, {}, {}>>;
+	methods?: TMethods & ThisType<EventComposer<TBase, TEventMap, TBase, TBase, {}, {}, TMethods> & TMethods>;
 }): {
 	Composer: EventComposerConstructor<TBase, TEventMap, TMethods>;
 	compose: typeof compose;
