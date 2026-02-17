@@ -21,7 +21,7 @@ export type DeriveHandler<T, D> = (context: T) => D | Promise<D>;
 export type LazyFactory<T> = (context: T) => Middleware<T> | Promise<Middleware<T>>;
 
 /** Single value or array */
-export type MaybeArray<T> = T | T[];
+export type MaybeArray<T> = T | readonly T[];
 
 /** Scope level for middleware propagation */
 export type Scope = "local" | "scoped" | "global";

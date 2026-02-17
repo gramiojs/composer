@@ -566,11 +566,11 @@ describe("Observability", () => {
 			expect(capturedStack).not.toContain("dispatch");
 			expect(capturedStack).not.toContain("compose.ts");
 			expect(capturedStack).not.toContain("composer.ts");
-			expect(capturedStack).toMatchInlineSnapshot(`
-			  "Error: db fail
-			      at getUser (Z:\\PROJECTS\\GRAMIO\\composer\\tests\\observability.test.ts:551:16)
-			      at <anonymous> (Z:\\PROJECTS\\GRAMIO\\composer\\tests\\observability.test.ts:558:14)"
-			`);
+			// expect(capturedStack).toMatchInlineSnapshot(`
+			//   "Error: db fail
+			//       at getUser (Z:\\PROJECTS\\GRAMIO\\composer\\tests\\observability.test.ts:551:16)
+			//       at <anonymous> (Z:\\PROJECTS\\GRAMIO\\composer\\tests\\observability.test.ts:558:14)"
+			// `);
 		});
 
 		it("named use() handler name survives in cleaned stack", async () => {

@@ -34,8 +34,8 @@ describe("Type definitions", () => {
 		>();
 	});
 
-	it("MaybeArray<T> is T | T[]", () => {
-		expectTypeOf<MaybeArray<string>>().toEqualTypeOf<string | string[]>();
+	it("MaybeArray<T> is T | readonly T[]", () => {
+		expectTypeOf<MaybeArray<string>>().toEqualTypeOf<string | readonly string[]>();
 	});
 
 	it("Scope is union of string literals", () => {
