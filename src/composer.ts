@@ -396,20 +396,30 @@ export class Composer<
 			this["~"].extended.add(key);
 		}
 
-		// 2. Inherit other's extended set (transitive dedup)
+		// 2. Snapshot already-known keys BEFORE inheriting (for transitive dedup)
+		const alreadyExtended = new Set(this["~"].extended);
+
+		// 3. Inherit other's extended set (transitive dedup)
 		for (const key of other["~"].extended) {
 			this["~"].extended.add(key);
 		}
 
-		// 3. Merge error definitions and error handlers
+		// 4. Merge error definitions and error handlers
 		Object.assign(this["~"].errorsDefinitions, other["~"].errorsDefinitions);
 		this["~"].onErrors.push(...other["~"].onErrors);
 
-		// 4. Process other's middleware by scope
+		// 5. Process other's middleware by scope, skipping transitively-deduped plugins
 		const pluginName = other["~"].name;
-		const localMws = other["~"].middlewares.filter((m) => m.scope === "local");
-		const scopedMws = other["~"].middlewares.filter((m) => m.scope === "scoped");
-		const globalMws = other["~"].middlewares.filter((m) => m.scope === "global");
+		const isNew = (m: ScopedMiddleware<any>) => {
+			if (!m.plugin) return true;
+			for (const key of alreadyExtended) {
+				if (key.startsWith(m.plugin + ":")) return false;
+			}
+			return true;
+		};
+		const localMws = other["~"].middlewares.filter((m) => m.scope === "local" && isNew(m));
+		const scopedMws = other["~"].middlewares.filter((m) => m.scope === "scoped" && isNew(m));
+		const globalMws = other["~"].middlewares.filter((m) => m.scope === "global" && isNew(m));
 
 		// Local → wrap in isolated group
 		if (localMws.length > 0) {

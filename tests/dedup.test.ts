@@ -82,6 +82,82 @@ describe("Deduplication", () => {
 		expect(aCalls).toBe(1);
 	});
 
+	it("transitive dedup — shared via two plugins, middleware runs once", async () => {
+		let sharedCalls = 0;
+
+		const shared = new Composer({ name: "shared" }).use((_, next) => {
+			sharedCalls++;
+			return next();
+		});
+
+		const pluginA = new Composer({ name: "pluginA" }).extend(shared);
+		const pluginB = new Composer({ name: "pluginB" }).extend(shared);
+
+		const app = new Composer()
+			.extend(pluginA)  // brings shared
+			.extend(pluginB); // shared already known — its middleware skipped
+
+		await app.run({});
+		expect(sharedCalls).toBe(1);
+	});
+
+	it("transitive dedup — scoped middleware from shared plugin not duplicated", async () => {
+		let sharedCalls = 0;
+
+		const shared = new Composer({ name: "shared" })
+			.derive((ctx) => {
+				sharedCalls++;
+				return { sharedVal: 1 };
+			}, { as: "scoped" });
+
+		const pluginA = new Composer({ name: "pluginA" }).extend(shared);
+		const pluginB = new Composer({ name: "pluginB" }).extend(shared);
+
+		const app = new Composer()
+			.extend(pluginA)
+			.extend(pluginB);
+
+		await app.run({});
+		expect(sharedCalls).toBe(1);
+	});
+
+	it("transitive dedup — global middleware from shared plugin not duplicated", async () => {
+		let sharedCalls = 0;
+
+		const shared = new Composer({ name: "shared" })
+			.derive((ctx) => {
+				sharedCalls++;
+				return { sharedVal: 1 };
+			}, { as: "global" });
+
+		const pluginA = new Composer({ name: "pluginA" }).extend(shared);
+		const pluginB = new Composer({ name: "pluginB" }).extend(shared);
+
+		const app = new Composer()
+			.extend(pluginA)
+			.extend(pluginB);
+
+		await app.run({});
+		expect(sharedCalls).toBe(1);
+	});
+
+	it("transitive dedup — diamond: A→B, A→C, B+C→D", async () => {
+		let aCalls = 0;
+
+		const a = new Composer({ name: "A" }).use((_, next) => {
+			aCalls++;
+			return next();
+		});
+
+		const b = new Composer({ name: "B" }).extend(a);
+		const c = new Composer({ name: "C" }).extend(a);
+		const d = new Composer({ name: "D" }).extend(b).extend(c);
+
+		const app = new Composer().extend(d);
+		await app.run({});
+		expect(aCalls).toBe(1);
+	});
+
 	it("transitive dedup — multi-level", async () => {
 		let aCalls = 0;
 
