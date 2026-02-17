@@ -305,6 +305,52 @@ const app = new Composer()
   });
 ```
 
+#### `types` + `eventTypes()` — phantom type inference
+
+TypeScript cannot partially infer type arguments, so when you need both `TEventMap` and `TMethods` inferred together, use the `types` phantom field with the `eventTypes()` helper instead of explicit type parameters:
+
+```ts
+import { createComposer, eventTypes } from "@gramio/composer";
+
+// eventTypes<T>() returns undefined at runtime — purely for inference
+const { Composer } = createComposer({
+  discriminator: (ctx: BaseCtx) => ctx.updateType,
+  types: eventTypes<{ message: MessageCtx; callback_query: CallbackCtx }>(),
+});
+// TBase inferred from discriminator, TEventMap inferred from types
+```
+
+#### `methods` — custom prototype methods
+
+Inject framework-specific DX sugar directly onto the Composer prototype via the `methods` config option. Method bodies receive `this` typed as the full `EventComposer`, giving access to `.on()`, `.use()`, `.derive()`, etc.
+
+```ts
+const { Composer } = createComposer({
+  discriminator: (ctx: BaseCtx) => ctx.updateType,
+  types: eventTypes<{ message: MessageCtx }>(),
+  methods: {
+    hears(trigger: RegExp | string, handler: (ctx: MessageCtx) => unknown) {
+      return this.on("message", (ctx, next) => {
+        const text = ctx.text;
+        if (
+          (typeof trigger === "string" && text === trigger) ||
+          (trigger instanceof RegExp && text && trigger.test(text))
+        ) {
+          return handler(ctx);
+        }
+        return next();
+      });
+    },
+  },
+});
+
+const bot = new Composer();
+bot.hears(/hello/, handler);            // custom method
+bot.on("message", h).hears(/hi/, h2);  // chaining works — TMethods preserved
+```
+
+Custom methods are preserved through **all** method chains (`on`, `use`, `derive`, `extend`, etc.). A runtime conflict check throws if a method name collides with a built-in (e.g. `on`, `use`, `derive`).
+
 ### `EventQueue`
 
 Concurrent event queue with graceful shutdown.
