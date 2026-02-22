@@ -35,6 +35,18 @@ type ResolveEventCtx<
 		& (E extends keyof TDerives ? TDerives[E] : {})
 	: never;
 
+/**
+ * Given an event map and a Narrowing type, yields the union of event names
+ * whose context type contains all keys from Narrowing.
+ */
+export type CompatibleEvents<
+	TEventMap extends Record<string, any>,
+	Narrowing,
+> = {
+	[E in keyof TEventMap & string]:
+		keyof Narrowing & string extends keyof TEventMap[E] ? E : never
+}[keyof TEventMap & string];
+
 /** EventComposer interface — Composer + .on() + per-event derive tracking + custom methods */
 export interface EventComposer<
 	TBase extends object,
@@ -46,6 +58,20 @@ export interface EventComposer<
 	TMethods extends Record<string, (...args: any[]) => any> = {},
 > {
 	// --- Methods that preserve generics → return `this` (keeps TMethods in chain) ---
+
+	// Filter-only overload (type-narrowing predicate — auto-discovers matching events)
+	on<Narrowing>(
+		filter: (ctx: any) => ctx is Narrowing,
+		handler: Middleware<
+			ResolveEventCtx<TOut, TEventMap, TDerives, CompatibleEvents<TEventMap, Narrowing>> & Narrowing
+		>,
+	): this;
+
+	// Filter-only overload (boolean — no narrowing, handler gets TOut)
+	on(
+		filter: (ctx: TOut) => boolean,
+		handler: Middleware<TOut>,
+	): this;
 
 	// Filter overload (type-narrowing predicate)
 	on<E extends keyof TEventMap & string, Narrowing>(
@@ -67,9 +93,8 @@ export interface EventComposer<
 		handler: Middleware<ResolveEventCtx<TOut, TEventMap, TDerives, E> & Patch>,
 	): this;
 
-	use(
-		...middleware: Middleware<TOut>[]
-	): this;
+	use<Patch extends object>(handler: Middleware<TOut & Patch>): this;
+	use(...middleware: Middleware<TOut>[]): this;
 
 	// Gate with type predicate → narrow TOut for downstream handlers
 	guard<Narrowing>(
@@ -246,11 +271,27 @@ export function createComposer<
 } {
 	class EventComposerImpl extends Composer<any, any, any> {
 		on(
-			event: string | string[],
+			eventOrFilter: string | string[] | ((ctx: any) => boolean),
 			filterOrHandler: Middleware<any> | ((ctx: any) => boolean),
 			handler?: Middleware<any>,
 		) {
-			const events = Array.isArray(event) ? event : [event];
+			// Filter-only mode: first arg is a function
+			if (typeof eventOrFilter === "function") {
+				const filter = eventOrFilter as (ctx: any) => boolean;
+				const actualHandler = filterOrHandler as Middleware<any>;
+				const filterLabel = filter.name || "filter";
+				const mw: Middleware<any> = (ctx: any, next: any) => {
+					if (filter(ctx)) return actualHandler(ctx, next);
+					return next();
+				};
+				nameMiddleware(mw, "on", filterLabel);
+				this["~"].middlewares.push({ fn: mw, scope: "local", type: "on", name: filterLabel });
+				this.invalidate();
+				return this;
+			}
+
+			// Event-based mode (existing logic)
+			const events = Array.isArray(eventOrFilter) ? eventOrFilter : [eventOrFilter];
 			const eventLabel = events.join("|");
 
 			const actualHandler = handler ?? (filterOrHandler as Middleware<any>);

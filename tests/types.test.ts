@@ -64,6 +64,14 @@ describe("Composer type accumulation", () => {
 		expectTypeOf(c).toEqualTypeOf<Composer<{ a: number }, { a: number }, {}>>();
 	});
 
+	it("use<Patch>() extends context with Patch without changing TOut", () => {
+		new Composer<{ a: number }>().use<{ extra: string }>((ctx, next) => {
+			expectTypeOf(ctx.a).toBeNumber();
+			expectTypeOf(ctx.extra).toBeString();
+			return next();
+		});
+	});
+
 	it("derive() grows TOut", () => {
 		const c = new Composer<{ a: number }>().derive(() => ({ b: "hello" }));
 
@@ -435,6 +443,14 @@ describe(".on() 3-arg filter overloads types", () => {
 		new EC().on<"message", { args: string }>("message", (ctx, next) => {
 			expectTypeOf(ctx.args).toBeString();
 			expectTypeOf(ctx.text).toEqualTypeOf<string | undefined>();
+			return next();
+		});
+	});
+
+	it("Patch generic on .use() extends context", () => {
+		new EC().use<{ args: string }>((ctx, next) => {
+			expectTypeOf(ctx.args).toBeString();
+			expectTypeOf(ctx.updateType).toBeString();
 			return next();
 		});
 	});

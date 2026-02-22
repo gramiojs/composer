@@ -2,7 +2,7 @@
 export { compose } from "./compose.ts";
 export { Composer, type RouteHandler, type RouteBuilder } from "./composer.ts";
 export { createComposer, eventTypes } from "./factory.ts";
-export type { EventComposer, EventComposerConstructor } from "./factory.ts";
+export type { EventComposer, EventComposerConstructor, CompatibleEvents } from "./factory.ts";
 export { EventQueue } from "./queue.ts";
 
 // Types

@@ -348,6 +348,17 @@ app.on<"message", { args: string }>("message", (ctx, next) => {
 });
 ```
 
+`.use()` supports the same `Patch` generic — handy when a custom method enriches context before delegating to a user-provided handler:
+
+```ts
+app.use<{ args: string }>((ctx, next) => {
+  ctx.args; // string — type-safe without casting
+  return next();
+});
+```
+
+`Patch` does not change `TOut` — it is a local escape hatch for one handler, not a permanent context extension. Use `derive()` when you want the addition to propagate to all downstream middleware.
+
 #### `types` + `eventTypes()` — phantom type inference
 
 TypeScript cannot partially infer type arguments, so when you need both `TEventMap` and `TMethods` inferred together, use the `types` phantom field with the `eventTypes()` helper instead of explicit type parameters:

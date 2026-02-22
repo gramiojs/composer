@@ -35,6 +35,7 @@ src/
 - **inspect()** — returns `MiddlewareInfo[]` with `{ index, type, name, scope, plugin? }` for each registered middleware. Read-only projection of internal state.
 - **Clean stack traces** — `compose()` error handler strips library-internal frames from `error.stack` before passing to `onError` handlers and `console.error`. Uses `import.meta.url` to detect the library's source directory at load time. Users only see their own code in stack traces.
 - **`.on()` 3-arg overload** — `on(event, filter, handler)` supports both type-narrowing predicates (`(ctx) => ctx is Narrowing`) and boolean filters (`(ctx) => boolean`). Filter check runs after event discrimination. The 2-arg `on(event, handler)` also accepts an optional `Patch` generic for context extensions: `on<"message", { args: string }>("message", handler)`.
+- **`Patch` generic on `.use()`** — `use<Patch extends object>(handler)` lets handlers declare additional context properties not tracked in `TOut`. Useful in custom methods that enrich context before calling the handler: `use<{ args: string }>((ctx, next) => { ctx.args; })`. Does not change `TOut` — type-only escape hatch. Zero runtime overhead.
 - **Custom methods** — `createComposer` accepts `methods` config for framework-specific DX sugar (e.g. `hears`, `command`). Methods are added to prototype, typed via `ThisType`. Runtime conflict check prevents accidental override of built-in methods. Phantom `types` field + `eventTypes<TEventMap>()` helper enables full type inference without explicit type parameters.
 
 More about it - docs/SPEC.md

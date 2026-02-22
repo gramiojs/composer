@@ -98,9 +98,10 @@ export class Composer<
 		return this as any;
 	}
 
-	use(
-		...middleware: Middleware<TOut>[]
-	): Composer<TIn, TOut, TExposed> {
+	use<Patch extends object>(handler: Middleware<TOut & Patch>): this;
+	use(...middleware: Middleware<TOut>[]): Composer<TIn, TOut, TExposed>;
+	// biome-ignore lint/suspicious/noExplicitAny: overload implementation signature
+	use(...middleware: Middleware<any>[]): this {
 		for (const fn of middleware) {
 			this["~"].middlewares.push({ fn, scope: "local", type: "use", name: fn.name || undefined });
 		}
