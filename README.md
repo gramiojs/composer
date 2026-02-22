@@ -315,7 +315,29 @@ const app = new Composer()
 
 #### `.on()` with filters
 
-The 3-arg overload `on(event, filter, handler)` supports both type-narrowing predicates and boolean filters:
+**Filter-only (no event name)** — the 2-arg `on(filter, handler)` applies the filter to **all** events without discriminating by event type:
+
+```ts
+// Type-narrowing filter — handler sees narrowed context across all compatible events
+app.on(
+  (ctx): ctx is { text: string } => typeof (ctx as any).text === "string",
+  (ctx, next) => {
+    ctx.text; // string (narrowed)
+    return next();
+  },
+);
+
+// Boolean filter — no narrowing, handler gets base TOut
+app.on(
+  (ctx) => ctx.updateType === "message",
+  (ctx, next) => {
+    // no type narrowing, full context
+    return next();
+  },
+);
+```
+
+**Event + filter** — the 3-arg `on(event, filter, handler)` supports both type-narrowing predicates and boolean filters:
 
 ```ts
 // Type-narrowing filter — handler sees narrowed context

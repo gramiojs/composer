@@ -416,6 +416,104 @@ describe(".on() with filter (3-arg)", () => {
 	});
 });
 
+describe(".on() with filter-only (2-arg, no event name)", () => {
+	it("type-narrowing filter — matching ctx calls handler", async () => {
+		const calls: string[] = [];
+
+		const app = new Composer().on(
+			(ctx): ctx is MessageCtx & { text: string } => ctx.text !== undefined,
+			(ctx, next) => {
+				calls.push(`text:${ctx.text}`);
+				return next();
+			},
+		);
+
+		await app.run({ updateType: "message", text: "hello" } as any);
+		expect(calls).toEqual(["text:hello"]);
+	});
+
+	it("type-narrowing filter — non-matching ctx skips handler", async () => {
+		const calls: string[] = [];
+
+		const app = new Composer()
+			.on(
+				(ctx): ctx is MessageCtx & { text: string } =>
+					ctx.text !== undefined,
+				(_ctx, next) => {
+					calls.push("filtered");
+					return next();
+				},
+			)
+			.use((_ctx, next) => {
+				calls.push("fallthrough");
+				return next();
+			});
+
+		// No text → filter rejects → falls through
+		await app.run({ updateType: "message" } as any);
+		expect(calls).toEqual(["fallthrough"]);
+	});
+
+	it("filter-only: no event discrimination (all events go through filter)", async () => {
+		const calls: string[] = [];
+
+		const app = new Composer().on(
+			(ctx): ctx is BaseCtx & { text: string } =>
+				(ctx as any).text !== undefined,
+			(ctx, next) => {
+				calls.push(`text:${ctx.text}`);
+				return next();
+			},
+		);
+
+		// message with text — matches filter
+		await app.run({ updateType: "message", text: "hi" } as any);
+		// callback_query with text — also matches filter (no event check)
+		await app.run({ updateType: "callback_query", text: "cb" } as any);
+		// message without text — filter rejects
+		await app.run({ updateType: "message" } as any);
+
+		expect(calls).toEqual(["text:hi", "text:cb"]);
+	});
+
+	it("boolean filter-only — matching ctx calls handler", async () => {
+		const calls: string[] = [];
+
+		const app = new Composer().on(
+			(ctx: any) => ctx.text === "secret",
+			(ctx, next) => {
+				calls.push("got");
+				return next();
+			},
+		);
+
+		await app.run({ updateType: "message", text: "secret" } as any);
+		await app.run({ updateType: "message", text: "other" } as any);
+		expect(calls).toEqual(["got"]);
+	});
+
+	it("filter-only chains with event-based .on()", async () => {
+		const calls: string[] = [];
+
+		const app = new Composer()
+			.on(
+				(ctx): ctx is MessageCtx & { text: string } =>
+					ctx.text !== undefined,
+				(ctx, next) => {
+					calls.push(`filter:${ctx.text}`);
+					return next();
+				},
+			)
+			.on("message", (_ctx, next) => {
+				calls.push("event");
+				return next();
+			});
+
+		await app.run({ updateType: "message", text: "hi" } as any);
+		expect(calls).toEqual(["filter:hi", "event"]);
+	});
+});
+
 describe("guard() gate narrows downstream context", () => {
 	it("guard gate — matching predicate allows next", async () => {
 		const calls: string[] = [];

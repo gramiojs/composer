@@ -532,3 +532,62 @@ describe("guard() type narrowing", () => {
 			});
 	});
 });
+
+// ─── filter-only .on() types ───
+
+describe(".on() filter-only overloads types", () => {
+	interface Base {
+		updateType: string;
+	}
+	interface MsgCtx extends Base {
+		text?: string;
+		caption?: string;
+	}
+	interface CbCtx extends Base {
+		data?: string;
+	}
+
+	const { Composer: EC } = createComposer<
+		Base,
+		{ message: MsgCtx; callback_query: CbCtx }
+	>({
+		discriminator: (ctx) => ctx.updateType,
+	});
+
+	it("type-narrowing filter-only: handler gets narrowing intersected with compatible events", () => {
+		new EC().on(
+			(ctx): ctx is { text: string } => typeof (ctx as any).text === "string",
+			(ctx, next) => {
+				// text is narrowed to string
+				expectTypeOf(ctx.text).toBeString();
+				// caption from MsgCtx is still accessible (message is compatible)
+				expectTypeOf(ctx.caption).toEqualTypeOf<string | undefined>();
+				return next();
+			},
+		);
+	});
+
+	it("boolean filter-only: handler gets TOut (no narrowing)", () => {
+		new EC().on(
+			(ctx) => ctx.updateType === "message",
+			(ctx, next) => {
+				// updateType is string — no narrowing
+				expectTypeOf(ctx.updateType).toBeString();
+				return next();
+			},
+		);
+	});
+
+	it("type-narrowing filter-only with derives", () => {
+		new EC()
+			.derive(() => ({ ts: 0 }))
+			.on(
+				(ctx): ctx is { text: string } => typeof (ctx as any).text === "string",
+				(ctx, next) => {
+					expectTypeOf(ctx.text).toBeString();
+					expectTypeOf(ctx.ts).toBeNumber();
+					return next();
+				},
+			);
+	});
+});
