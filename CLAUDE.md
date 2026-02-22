@@ -23,7 +23,7 @@ src/
 - **Local isolation** uses `Object.create(ctx)` — prototype chain lets reads fall through, writes stay local
 - **Deduplication** by name + JSON.stringify(seed) with transitive inheritance of extended sets
 - **Lazy compilation** with dirty flag — compose() caches, any mutation invalidates
-- **guard() dual mode**: with handlers = side-effects (always continues); without handlers = gate (blocks chain if false)
+- **guard() dual mode**: with handlers = side-effects (always continues); without handlers = gate (blocks chain if false). Gate mode with a type predicate narrows `TOut` for all downstream middleware (returns `EventComposer<..., TOut & Narrowing, ...>` instead of `this`)
 - **`_` / `"~"` internals** — all internal state lives on `_` object, `"~"` is alias. Access via `composer["~"].middlewares` etc. Pushes internals to end of IDE autocomplete
 - **Event-specific derive** — EventComposer supports `derive(event, handler)` for per-event context enrichment
 - **Error system (Elysia-style)** — `error(kind, class)` registers error kinds, `onError(handler)` pushes to `["~"].onErrors` array. On error: handlers iterated in order, first to return non-undefined wins, unhandled errors logged via `console.error` (no re-throw, no crash). `extend()` merges both `errorsDefinitions` and `onErrors`. Handler receives `{ error, context, kind? }` where `kind` is resolved via `instanceof` against registered classes
@@ -34,6 +34,7 @@ src/
 - **trace()** — opt-in hook for external instrumentation. Sets a `TraceHandler` callback. At `compose()` time, if tracer is set, each middleware is wrapped with enter/exit instrumentation. Zero overhead when not used.
 - **inspect()** — returns `MiddlewareInfo[]` with `{ index, type, name, scope, plugin? }` for each registered middleware. Read-only projection of internal state.
 - **Clean stack traces** — `compose()` error handler strips library-internal frames from `error.stack` before passing to `onError` handlers and `console.error`. Uses `import.meta.url` to detect the library's source directory at load time. Users only see their own code in stack traces.
+- **`.on()` 3-arg overload** — `on(event, filter, handler)` supports both type-narrowing predicates (`(ctx) => ctx is Narrowing`) and boolean filters (`(ctx) => boolean`). Filter check runs after event discrimination. The 2-arg `on(event, handler)` also accepts an optional `Patch` generic for context extensions: `on<"message", { args: string }>("message", handler)`.
 - **Custom methods** — `createComposer` accepts `methods` config for framework-specific DX sugar (e.g. `hears`, `command`). Methods are added to prototype, typed via `ThisType`. Runtime conflict check prevents accidental override of built-in methods. Phantom `types` field + `eventTypes<TEventMap>()` helper enables full type inference without explicit type parameters.
 
 More about it - docs/SPEC.md

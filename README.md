@@ -119,13 +119,21 @@ app.guard(
 );
 ```
 
-**Without handlers** — gate the chain: if false, stop this composer's remaining middleware:
+**Without handlers (gate mode)** — if false, stop this composer's remaining middleware. When a type predicate is used, downstream context is narrowed:
 
 ```ts
 // Only admin can reach subsequent middleware
 app
   .guard((ctx) => ctx.role === "admin")
   .use(adminOnlyHandler);  // skipped if not admin
+
+// Type predicate narrows context for all downstream handlers
+app
+  .guard((ctx): ctx is Ctx & { text: string } => "text" in ctx)
+  .on("message", (ctx, next) => {
+    ctx.text; // string (narrowed by guard)
+    return next();
+  });
 ```
 
 When used inside an `extend()`-ed plugin, the guard stops the plugin's chain but the parent continues:
@@ -303,6 +311,41 @@ const app = new Composer()
     ctx.data;       // string | undefined
     return next();
   });
+```
+
+#### `.on()` with filters
+
+The 3-arg overload `on(event, filter, handler)` supports both type-narrowing predicates and boolean filters:
+
+```ts
+// Type-narrowing filter — handler sees narrowed context
+app.on(
+  "message",
+  (ctx): ctx is MessageCtx & { text: string } => ctx.text !== undefined,
+  (ctx, next) => {
+    ctx.text; // string (narrowed, not string | undefined)
+    return next();
+  },
+);
+
+// Boolean filter — no narrowing, handler sees full context
+app.on(
+  "message",
+  (ctx) => ctx.text !== undefined,
+  (ctx, next) => {
+    ctx.text; // string | undefined (not narrowed)
+    return next();
+  },
+);
+```
+
+The 2-arg `on()` also accepts an optional `Patch` generic for context extensions (useful in custom methods):
+
+```ts
+app.on<"message", { args: string }>("message", (ctx, next) => {
+  ctx.args; // string — type-safe without casting
+  return next();
+});
 ```
 
 #### `types` + `eventTypes()` — phantom type inference
