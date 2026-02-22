@@ -370,3 +370,149 @@ describe("when() types", () => {
 			});
 	});
 });
+
+// ─── .on() filter overloads types ───
+
+describe(".on() 3-arg filter overloads types", () => {
+	interface Base {
+		updateType: string;
+	}
+	interface MsgCtx extends Base {
+		text?: string;
+		caption?: string;
+	}
+	interface CbCtx extends Base {
+		data?: string;
+	}
+
+	const { Composer: EC } = createComposer<
+		Base,
+		{ message: MsgCtx; callback_query: CbCtx }
+	>({
+		discriminator: (ctx) => ctx.updateType,
+	});
+
+	it("type-narrowing filter narrows context in handler", () => {
+		new EC().on(
+			"message",
+			(ctx): ctx is MsgCtx & { text: string } => ctx.text !== undefined,
+			(ctx, next) => {
+				expectTypeOf(ctx.text).toBeString();
+				// original MsgCtx properties still present
+				expectTypeOf(ctx.caption).toEqualTypeOf<string | undefined>();
+				return next();
+			},
+		);
+	});
+
+	it("boolean filter preserves full context in handler (no narrowing)", () => {
+		new EC().on(
+			"message",
+			(ctx) => ctx.text !== undefined,
+			(ctx, next) => {
+				// text stays optional — no narrowing with boolean filter
+				expectTypeOf(ctx.text).toEqualTypeOf<string | undefined>();
+				return next();
+			},
+		);
+	});
+
+	it("type-narrowing filter with derives — both visible in handler", () => {
+		new EC()
+			.derive(() => ({ ts: 0 }))
+			.on(
+				"message",
+				(ctx): ctx is MsgCtx & { text: string } => ctx.text !== undefined,
+				(ctx, next) => {
+					expectTypeOf(ctx.text).toBeString();
+					expectTypeOf(ctx.ts).toBeNumber();
+					return next();
+				},
+			);
+	});
+
+	it("Patch generic on 2-arg .on() extends context", () => {
+		new EC().on<"message", { args: string }>("message", (ctx, next) => {
+			expectTypeOf(ctx.args).toBeString();
+			expectTypeOf(ctx.text).toEqualTypeOf<string | undefined>();
+			return next();
+		});
+	});
+});
+
+// ─── guard() type narrowing ───
+
+describe("guard() type narrowing", () => {
+	interface Base {
+		updateType: string;
+	}
+	interface MsgCtx extends Base {
+		text?: string;
+	}
+	interface CbCtx extends Base {
+		data?: string;
+	}
+
+	const { Composer: EC } = createComposer<
+		Base,
+		{ message: MsgCtx; callback_query: CbCtx }
+	>({
+		discriminator: (ctx) => ctx.updateType,
+	});
+
+	it("guard with type predicate narrows TOut for downstream .on()", () => {
+		EC.prototype;
+		new EC()
+			.guard((ctx): ctx is Base & { text: string } => "text" in ctx)
+			.on("message", (ctx, next) => {
+				// text narrowed to string by guard
+				expectTypeOf(ctx.text).toBeString();
+				return next();
+			});
+	});
+
+	it("guard with type predicate narrows TOut for downstream .use()", () => {
+		new EC()
+			.guard(
+				(ctx): ctx is Base & { extra: number } =>
+					"extra" in ctx,
+			)
+			.use((ctx, next) => {
+				expectTypeOf(ctx.extra).toBeNumber();
+				return next();
+			});
+	});
+
+	it("chained guards accumulate narrowing", () => {
+		new EC()
+			.guard((ctx): ctx is Base & { a: number } => "a" in ctx)
+			.guard((ctx): ctx is Base & { a: number } & { b: string } => "b" in ctx)
+			.use((ctx, next) => {
+				expectTypeOf(ctx.a).toBeNumber();
+				expectTypeOf(ctx.b).toBeString();
+				return next();
+			});
+	});
+
+	it("guard with boolean predicate does NOT narrow (returns this)", () => {
+		const app = new EC().guard((ctx) => ctx.updateType === "message");
+
+		// TOut unchanged — still Base
+		app.use((ctx, next) => {
+			expectTypeOf(ctx.updateType).toBeString();
+			return next();
+		});
+	});
+
+	it("guard + derive + .on() — all combine", () => {
+		new EC()
+			.derive(() => ({ ts: 0 }))
+			.guard((ctx): ctx is Base & { ts: number } & { flag: true } => true)
+			.on("message", (ctx, next) => {
+				expectTypeOf(ctx.ts).toBeNumber();
+				expectTypeOf(ctx.flag).toEqualTypeOf<true>();
+				expectTypeOf(ctx.text).toEqualTypeOf<string | undefined>();
+				return next();
+			});
+	});
+});

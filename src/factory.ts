@@ -47,15 +47,36 @@ export interface EventComposer<
 > {
 	// --- Methods that preserve generics → return `this` (keeps TMethods in chain) ---
 
+	// Filter overload (type-narrowing predicate)
+	on<E extends keyof TEventMap & string, Narrowing>(
+		event: MaybeArray<E>,
+		filter: (ctx: any) => ctx is Narrowing,
+		handler: Middleware<ResolveEventCtx<TOut, TEventMap, TDerives, E> & Narrowing>,
+	): this;
+
+	// Filter overload (boolean, no narrowing)
 	on<E extends keyof TEventMap & string>(
 		event: MaybeArray<E>,
+		filter: (ctx: ResolveEventCtx<TOut, TEventMap, TDerives, E>) => boolean,
 		handler: Middleware<ResolveEventCtx<TOut, TEventMap, TDerives, E>>,
+	): this;
+
+	// Existing 2-arg with optional Patch generic
+	on<E extends keyof TEventMap & string, Patch extends object = {}>(
+		event: MaybeArray<E>,
+		handler: Middleware<ResolveEventCtx<TOut, TEventMap, TDerives, E> & Patch>,
 	): this;
 
 	use(
 		...middleware: Middleware<TOut>[]
 	): this;
 
+	// Gate with type predicate → narrow TOut for downstream handlers
+	guard<Narrowing>(
+		predicate: (context: any) => context is Narrowing,
+	): EventComposer<TBase, TEventMap, TIn, TOut & Narrowing, TExposed, TDerives, TMethods> & TMethods;
+
+	// Boolean predicate or with middleware → no narrowing
 	guard<S extends TOut>(
 		predicate: ((context: TOut) => context is S) | ((context: TOut) => boolean | Promise<boolean>),
 		...middleware: Middleware<any>[]
@@ -226,15 +247,19 @@ export function createComposer<
 	class EventComposerImpl extends Composer<any, any, any> {
 		on(
 			event: string | string[],
-			handler: Middleware<any>,
+			filterOrHandler: Middleware<any> | ((ctx: any) => boolean),
+			handler?: Middleware<any>,
 		) {
 			const events = Array.isArray(event) ? event : [event];
 			const eventLabel = events.join("|");
+
+			const actualHandler = handler ?? (filterOrHandler as Middleware<any>);
+			const filter = handler ? (filterOrHandler as (ctx: any) => boolean) : undefined;
+
 			const mw: Middleware<any> = (ctx: any, next: any) => {
-				if (events.includes(config.discriminator(ctx))) {
-					return handler(ctx, next);
-				}
-				return next();
+				if (!events.includes(config.discriminator(ctx))) return next();
+				if (filter && !filter(ctx)) return next();
+				return actualHandler(ctx, next);
 			};
 			nameMiddleware(mw, "on", eventLabel);
 			this["~"].middlewares.push({ fn: mw, scope: "local", type: "on", name: eventLabel });
