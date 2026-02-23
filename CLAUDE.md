@@ -7,10 +7,11 @@ Zero dependencies. Cross-runtime (Bun / Node.js / Deno).
 
 ```
 src/
-  types.ts      — all type definitions
+  types.ts      — all type definitions (including macro system types)
   compose.ts    — standalone compose() function
   composer.ts   — Composer class (core)
   factory.ts    — createComposer() factory (adds .on() event support)
+  macros.ts     — buildFromOptions() runtime helper for macro execution
   queue.ts      — EventQueue (concurrent processing with graceful shutdown)
   utils.ts      — noopNext, skip, stop, nameMiddleware, cleanErrorStack utilities
   index.ts      — barrel exports
@@ -18,7 +19,8 @@ src/
 
 ## Key Design Decisions
 
-- **Three generics** on Composer: `TIn` (caller provides), `TOut` (middleware sees), `TExposed` (propagates to parent via extend)
+- **Four generics** on Composer: `TIn` (caller provides), `TOut` (middleware sees), `TExposed` (propagates to parent via extend), `TMacros` (registered macro definitions)
+- **Nine generics** on EventComposer: `TBase`, `TEventMap`, `TIn`, `TOut`, `TExposed`, `TDerives`, `TMethods`, `TMacros`
 - **Scope system** (local/scoped/global) controls derive propagation through extend chains
 - **Local isolation** uses `Object.create(ctx)` — prototype chain lets reads fall through, writes stay local
 - **Deduplication** by name + JSON.stringify(seed) with transitive inheritance of extended sets
@@ -38,6 +40,7 @@ src/
 - **`.on()` 3-arg overload** — `on(event, filter, handler)` supports both type-narrowing predicates (`(ctx) => ctx is Narrowing`) and boolean filters (`(ctx) => boolean`). Filter check runs after event discrimination. The 2-arg `on(event, handler)` also accepts an optional `Patch` generic for context extensions: `on<"message", { args: string }>("message", handler)`.
 - **`Patch` generic on `.use()`** — `use<Patch extends object>(handler)` lets handlers declare additional context properties not tracked in `TOut`. Useful in custom methods that enrich context before calling the handler: `use<{ args: string }>((ctx, next) => { ctx.args; })`. Does not change `TOut` — type-only escape hatch. Zero runtime overhead.
 - **Custom methods** — `createComposer` accepts `methods` config for framework-specific DX sugar (e.g. `hears`, `command`). Methods are added to prototype, typed via `ThisType`. Runtime conflict check prevents accidental override of built-in methods. Phantom `types` field + `eventTypes<TEventMap>()` helper enables full type inference without explicit type parameters.
+- **Macro system** — Elysia-inspired declarative handler options. `macro(name, def)` registers macros that consumers activate via an options object on handler methods (e.g. `command("start", handler, { throttle: { limit: 3 } })`). `MacroDef` is either a function `(opts) => MacroHooks` or a plain `MacroHooks` object (for boolean shorthand). `MacroHooks` has `preHandler` (middleware) and `derive` (context enrichment; void = stop chain). `buildFromOptions()` composes the macro chain at runtime. Execution order: `options.preHandler` → per-macro `preHandler` → per-macro `derive` → main handler. `ContextCallback` marker type + `WithCtx<T, TCtx>` recursive type enable typed callbacks in macro options (framework replaces markers with actual context type at call site). `HandlerOptions<TBaseCtx, Macros>` builds the options type, `DeriveFromOptions<Macros, TOptions>` collects derive types. `TMacros` generic propagates through `extend()`, `macro()` chains.
 
 More about it - docs/SPEC.md
 
@@ -60,6 +63,7 @@ Tests live in `tests/` directory using `bun:test`. Test files mirror source stru
 - `queue.test.ts` — EventQueue
 - `utils.test.ts` — utility functions
 - `observability.test.ts` — function naming, inspect(), trace(), stack traces
+- `macros.test.ts` — macro system (registration, buildFromOptions, derive, preHandler)
 - `types.test.ts` — compile-time type assertions (verified via `bunx tsc --noEmit`)
 
 ## Rules

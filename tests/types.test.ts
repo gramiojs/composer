@@ -61,7 +61,7 @@ describe("Composer type accumulation", () => {
 			expectTypeOf(ctx).toEqualTypeOf<{ a: number }>();
 			return next();
 		});
-		expectTypeOf(c).toEqualTypeOf<Composer<{ a: number }, { a: number }, {}>>();
+		expectTypeOf(c).toEqualTypeOf<Composer<{ a: number }, { a: number }, {}, {}>>();
 	});
 
 	it("use<Patch>() extends context with Patch without changing TOut", () => {

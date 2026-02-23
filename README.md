@@ -446,6 +446,88 @@ queue.addBatch(events);
 await queue.stop(5000);
 ```
 
+### Macro System
+
+Declarative handler options inspired by [Elysia macros](https://elysiajs.com/patterns/macro.md). Register reusable behaviors (guards, rate-limits, auth) as macros, then activate them via an options object on handler methods.
+
+#### `macro(name, definition)` / `macro(definitions)`
+
+Register macros on a Composer or EventComposer instance.
+
+```ts
+import { Composer, type MacroDef, type ContextCallback } from "@gramio/composer";
+
+// Boolean shorthand macro — plain hooks object
+const onlyAdmin: MacroDef<void, {}> = {
+  preHandler: (ctx, next) => {
+    if (ctx.role !== "admin") return; // stops chain
+    return next();
+  },
+};
+
+// Parameterized macro — function receiving options
+interface ThrottleOptions {
+  limit: number;
+  window?: number;
+  onLimit?: ContextCallback; // ← replaced with actual ctx type at call site
+}
+
+const throttle: MacroDef<ThrottleOptions, {}> = (opts) => ({
+  preHandler: createThrottleMiddleware(opts),
+});
+
+// Macro with derive — enriches handler context
+interface AuthDerived { user: { id: number; name: string } }
+
+const auth: MacroDef<void, AuthDerived> = {
+  derive: async (ctx) => {
+    const user = await getUser(ctx.token);
+    if (!user) return; // void = stop chain (guard behavior)
+    return { user };
+  },
+};
+
+const app = new Composer()
+  .macro("onlyAdmin", onlyAdmin)
+  .macro({ throttle, auth }); // batch registration
+```
+
+#### `buildFromOptions(macros, options, handler)`
+
+Runtime helper that composes a handler with macro hooks. Used internally by frameworks to wire macros into handler methods.
+
+```ts
+import { buildFromOptions } from "@gramio/composer";
+
+// Execution order:
+// 1. options.preHandler[] (explicit guards — user controls order)
+// 2. Per-macro in options property order:
+//    a. macro.preHandler (guard middleware)
+//    b. macro.derive (context enrichment; void = stop chain)
+// 3. Main handler
+const composed = buildFromOptions(
+  app["~"].macros,
+  { auth: true, throttle: { limit: 5 } },
+  mainHandler,
+);
+```
+
+#### Macro Types
+
+```ts
+import type {
+  MacroDef,          // Macro definition (function or hooks object)
+  MacroHooks,        // { preHandler?, derive? }
+  MacroDefinitions,  // Record<string, MacroDef<any, any>>
+  ContextCallback,   // Marker type for context-aware callbacks
+  WithCtx,           // Recursively replaces ContextCallback with real ctx type
+  HandlerOptions,    // Builds the options parameter type for handler methods
+  DeriveFromOptions, // Collects derive types from activated macros
+  MacroOptionType,   // Extracts option type from MacroDef
+  MacroDeriveType,   // Extracts derive return type from MacroDef
+} from "@gramio/composer";
+```
+
 ### Utilities
 
 ```ts
