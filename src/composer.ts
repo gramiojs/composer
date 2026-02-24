@@ -127,6 +127,7 @@ export class Composer<
 		return this as any;
 	}
 
+	use(handler: Middleware<TOut>): this;
 	use<Patch extends object>(handler: Middleware<TOut & Patch>): this;
 	use(...middleware: Middleware<TOut>[]): Composer<TIn, TOut, TExposed>;
 	// biome-ignore lint/suspicious/noExplicitAny: overload implementation signature
