@@ -67,6 +67,8 @@ export class Composer<
 		>,
 		tracer: undefined as TraceHandler | undefined,
 		macros: {} as Record<string, MacroDef<any, any>>,
+		/** Phantom type accessor — never set at runtime, used by `ContextOf<T>` */
+		Out: undefined as unknown as TOut,
 	};
 
 	constructor(options?: ComposerOptions) {

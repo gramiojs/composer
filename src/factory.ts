@@ -49,6 +49,29 @@ export type CompatibleEvents<
 		keyof Narrowing & string extends keyof TEventMap[E] ? E : never
 }[keyof TEventMap & string];
 
+/**
+ * Minimal structural type for constraining `this` in custom composer methods.
+ *
+ * Use as an F-bounded constraint on `TThis` so that `this.on(...)` is typed
+ * and returns `TThis` without requiring `as any`:
+ *
+ * @example
+ * ```ts
+ * command<TThis extends ComposerLike<TThis>>(
+ *   this: TThis,
+ *   name: string,
+ *   handler: Middleware<MsgCtx & ContextOf<TThis>>,
+ * ): TThis {
+ *   const inner: Middleware<MsgCtx & ContextOf<TThis>> = (ctx, next) => {
+ *     if (ctx.text === `/${name}`) return handler(ctx, next);
+ *     return next();
+ *   };
+ *   return this.on("message", inner); // typed — no cast needed
+ * }
+ * ```
+ */
+export type ComposerLike<T = unknown> = { on(event: any, handler: any): T };
+
 /** EventComposer interface — Composer + .on() + per-event derive tracking + custom methods */
 export interface EventComposer<
 	TBase extends object,
@@ -231,6 +254,8 @@ export interface EventComposer<
 		tracer: TraceHandler | undefined;
 		macros: Record<string, MacroDef<any, any>>;
 		Derives: TDerives;
+		/** Phantom type accessor — never set at runtime, used by `ContextOf<T>` */
+		Out: TOut;
 	};
 	invalidate(): void;
 }
@@ -249,6 +274,100 @@ export interface EventComposerConstructor<
 	>(
 		options?: ComposerOptions,
 	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives, TMethods, TMacros> & TMethods;
+}
+
+/**
+ * Extracts the current accumulated context type (`TOut`) from an EventComposer
+ * or Composer instance type.
+ *
+ * Use with a `this: TThis` parameter in custom methods to get automatic
+ * derive type inference — the handler receives all types from previous `.derive()` calls
+ * without requiring explicit annotation at the call site.
+ *
+ * @example
+ * ```ts
+ * const { Composer } = createComposer({
+ *   methods: {
+ *     // Automatic: caller's derives are inferred into the handler
+ *     command<TThis>(
+ *       this: TThis,
+ *       name: string,
+ *       handler: Middleware<MessageCtx & ContextOf<TThis>>,
+ *     ) {
+ *       return (this as any).on("message", (ctx: any, next: any) => {
+ *         if (ctx.text === `/${name}`) return handler(ctx, next);
+ *         return next();
+ *       }) as TThis;
+ *     },
+ *
+ *     // Manual: caller declares which derives they need via Patch generic
+ *     hears<Patch extends object = {}>(
+ *       trigger: string,
+ *       handler: Middleware<MessageCtx & Patch>,
+ *     ) {
+ *       return this.on<"message", Patch>("message", (ctx, next) => {
+ *         if (ctx.text === trigger) return handler(ctx, next);
+ *         return next();
+ *       });
+ *     },
+ *   },
+ * });
+ *
+ * // With ContextOf — no type annotation needed at call site:
+ * new Composer()
+ *   .derive(() => ({ user: { id: 1 } }))
+ *   .command("start", (ctx) => ctx.user.id); // ✅ inferred automatically
+ *
+ * // With Patch — caller declares what they need:
+ * new Composer()
+ *   .derive(() => ({ user: { id: 1 } }))
+ *   .hears<{ user: { id: number } }>("hello", (ctx) => ctx.user.id); // ✅
+ * ```
+ */
+export type ContextOf<T> = T extends { "~": { Out: infer O } } ? O : never;
+
+/**
+ * Helper to define custom composer methods with full TypeScript inference.
+ *
+ * TypeScript cannot infer generic method signatures when they're passed directly
+ * inside `createComposer({ methods: { ... } })` because `TMethods` is buried
+ * inside the nested return type `{ Composer: EventComposerConstructor<..., TMethods> }`.
+ *
+ * This helper has return type `TMethods` directly — which lets TypeScript preserve
+ * generic method signatures. Pass the result (via `typeof`) as the 3rd type argument
+ * to `createComposer`:
+ *
+ * @example
+ * ```ts
+ * const methods = defineComposerMethods({
+ *   // Pattern: `this: TThis` + `ContextOf<TThis>` — zero annotation at call site
+ *   command<TThis>(
+ *     this: TThis,
+ *     name: string,
+ *     handler: Middleware<MessageCtx & ContextOf<TThis>>,
+ *   ): TThis {
+ *     return (this as any).on("message", (ctx: any, next: any) => {
+ *       if (ctx.text === `/${name}`) return handler(ctx, next);
+ *       return next();
+ *     }) as TThis;
+ *   },
+ * });
+ *
+ * const { Composer } = createComposer<Base, EventMap, typeof methods>({
+ *   discriminator: (ctx) => ctx.updateType,
+ *   methods,
+ * });
+ *
+ * // No annotation needed — derives flow in automatically:
+ * new Composer()
+ *   .derive(() => ({ user: { id: 1 } }))
+ *   .command("start", (ctx) => ctx.user.id); // ✅
+ * ```
+ */
+export function defineComposerMethods<
+	TMethods extends Record<string, (...args: any[]) => any>,
+>(methods: TMethods): TMethods {
+	return methods;
 }
 
 /**

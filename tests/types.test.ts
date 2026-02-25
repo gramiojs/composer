@@ -1,5 +1,5 @@
 import { describe, it, expectTypeOf } from "bun:test";
-import { Composer, createComposer, compose } from "../src/index.ts";
+import { Composer, createComposer, compose, defineComposerMethods } from "../src/index.ts";
 import type {
 	Middleware,
 	ComposedMiddleware,
@@ -8,7 +8,10 @@ import type {
 	DeriveHandler,
 	MaybeArray,
 	Scope,
+	ContextOf,
+	ComposerLike,
 } from "../src/index.ts";
+import { eventTypes } from "../src/index.ts";
 
 // ─── Core type definitions ───
 
@@ -589,5 +592,131 @@ describe(".on() filter-only overloads types", () => {
 					return next();
 				},
 			);
+	});
+});
+
+// ─── Custom methods + derive type propagation ───
+
+describe("Custom methods receiving derive types", () => {
+	interface Base { updateType: string }
+	interface MsgCtx extends Base { text?: string }
+	type Map = { message: MsgCtx };
+
+	/**
+	 * Pattern 1 — Patch generic.
+	 *
+	 * The caller explicitly declares which derive types it needs via the Patch type arg.
+	 * `ComposerLike<TThis>` constraint makes `this.on(...)` typed — no casts needed.
+	 *
+	 *   .command<{ user: User }>("start", (ctx) => ctx.user.id)
+	 *            ^^^^^^^^^^^^^^^^ caller provides this
+	 */
+	it("Patch generic: caller declares extra context with <Patch> at call site", () => {
+		const patchMethods = defineComposerMethods({
+			command<Patch extends object = {}, TThis extends ComposerLike<TThis> = any>(
+				this: TThis,
+				name: string,
+				handler: Middleware<MsgCtx & Patch>,
+			): TThis {
+				const inner: Middleware<MsgCtx & Patch> = (ctx, next) => {
+					if (ctx.text === `/${name}`) return handler(ctx, next);
+					return next();
+				};
+				return this.on("message", inner);
+			},
+		});
+
+		const { Composer: EC } = createComposer<Base, Map, typeof patchMethods>({
+			discriminator: (ctx) => ctx.updateType,
+			types: eventTypes<Map>(),
+			methods: patchMethods,
+		});
+
+		new EC()
+			.derive(() => ({ user: { id: 1 } }))
+			.command<{ user: { id: number } }>("start", (ctx, next) => {
+				expectTypeOf(ctx.user.id).toBeNumber();   // ✅ from declared Patch
+				expectTypeOf(ctx.text).toEqualTypeOf<string | undefined>(); // ✅ from MsgCtx
+				return next();
+			});
+	});
+
+	/**
+	 * Pattern 2 — `this: TThis` + `ContextOf<TThis>`.
+	 *
+	 * `ComposerLike<TThis>` constraint makes `this.on(...)` return `TThis` — fully typed,
+	 * no casts anywhere. Zero annotation at the call site — derives flow in automatically.
+	 *
+	 *   .command("start", (ctx) => ctx.user.id)
+	 *                              ^^^^^^^^^ automatically typed — no annotation!
+	 */
+	it("ContextOf<T>: derives inferred automatically via this: TThis parameter", () => {
+		const thisMethods = defineComposerMethods({
+			command<TThis extends ComposerLike<TThis>>(
+				this: TThis,
+				name: string,
+				handler: Middleware<MsgCtx & ContextOf<TThis>>,
+			): TThis {
+				const inner: Middleware<MsgCtx & ContextOf<TThis>> = (ctx, next) => {
+					if (ctx.text === `/${name}`) return handler(ctx, next);
+					return next();
+				};
+				return this.on("message", inner);
+			},
+		});
+
+		const { Composer: EC } = createComposer<Base, Map, typeof thisMethods>({
+			discriminator: (ctx) => ctx.updateType,
+			types: eventTypes<Map>(),
+			methods: thisMethods,
+		});
+
+		new EC()
+			.derive(() => ({ user: { id: 1 } }))
+			// No type arg needed — derives flow in automatically via ContextOf<TThis>:
+			.command("start", (ctx, next) => {
+				expectTypeOf(ctx.user.id).toBeNumber();   // ✅ inferred automatically!
+				expectTypeOf(ctx.text).toEqualTypeOf<string | undefined>(); // ✅
+				return next();
+			});
+	});
+
+	it("ContextOf<T>: works with multiple chained derives", () => {
+		const thisMethods = defineComposerMethods({
+			command<TThis extends ComposerLike<TThis>>(
+				this: TThis,
+				name: string,
+				handler: Middleware<MsgCtx & ContextOf<TThis>>,
+			): TThis {
+				const inner: Middleware<MsgCtx & ContextOf<TThis>> = (ctx, next) => {
+					if (ctx.text === `/${name}`) return handler(ctx, next);
+					return next();
+				};
+				return this.on("message", inner);
+			},
+		});
+
+		const { Composer: EC } = createComposer<Base, Map, typeof thisMethods>({
+			discriminator: (ctx) => ctx.updateType,
+			types: eventTypes<Map>(),
+			methods: thisMethods,
+		});
+
+		new EC()
+			.derive(() => ({ user: { id: 1 } }))
+			.derive(() => ({ session: { token: "abc" } }))
+			.derive(() => ({ permissions: ["read"] as string[] }))
+			.command("start", (ctx, next) => {
+				// All three derives visible without any annotation:
+				expectTypeOf(ctx.user.id).toBeNumber();
+				expectTypeOf(ctx.session.token).toBeString();
+				expectTypeOf(ctx.permissions).toEqualTypeOf<string[]>();
+				return next();
+			});
+	});
+
+	it("ContextOf<T> extracts TOut from plain Composer", () => {
+		type Out1 = ContextOf<Composer<{ a: number }, { a: number; b: string }>>;
+		expectTypeOf<Out1>().toEqualTypeOf<{ a: number; b: string }>();
 	});
 });

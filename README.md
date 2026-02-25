@@ -398,7 +398,9 @@ const { Composer } = createComposer({
 
 #### `methods` — custom prototype methods
 
-Inject framework-specific DX sugar directly onto the Composer prototype via the `methods` config option. Method bodies receive `this` typed as the full `EventComposer`, giving access to `.on()`, `.use()`, `.derive()`, etc.
+Inject framework-specific DX sugar directly onto the Composer prototype. Custom methods are preserved through **all** method chains (`on`, `use`, `derive`, `extend`, etc.). A runtime conflict check throws if a method name collides with a built-in.
+
+**Simple methods** (no access to accumulated derives) work directly in `methods`:
 
 ```ts
 const { Composer } = createComposer({
@@ -419,13 +421,77 @@ const { Composer } = createComposer({
     },
   },
 });
-
-const bot = new Composer();
-bot.hears(/hello/, handler);            // custom method
-bot.on("message", h).hears(/hi/, h2);  // chaining works — TMethods preserved
 ```
 
-Custom methods are preserved through **all** method chains (`on`, `use`, `derive`, `extend`, etc.). A runtime conflict check throws if a method name collides with a built-in (e.g. `on`, `use`, `derive`).
+**Methods that receive accumulated derives** require two steps. TypeScript cannot infer generic method signatures when `TMethods` is nested inside the return type of `createComposer`, so use `defineComposerMethods` first — its return type is directly `TMethods`, which preserves generic signatures. Then pass `typeof methods` as the 3rd type argument.
+
+Use `ComposerLike<TThis>` as an F-bounded constraint so that `this.on(...)` is fully typed and returns `TThis` — no casts needed.
+
+**Pattern: `this: TThis` + `ContextOf<TThis>` — zero annotation at the call site:**
+
+```ts
+import { createComposer, defineComposerMethods, eventTypes } from "@gramio/composer";
+import type { ComposerLike, ContextOf, Middleware } from "@gramio/composer";
+
+const methods = defineComposerMethods({
+  command<TThis extends ComposerLike<TThis>>(
+    this: TThis,
+    name: string,
+    handler: Middleware<MessageCtx & ContextOf<TThis>>,
+  ): TThis {
+    const inner: Middleware<MessageCtx & ContextOf<TThis>> = (ctx, next) => {
+      if (ctx.text === `/${name}`) return handler(ctx, next);
+      return next();
+    };
+    return this.on("message", inner);
+  },
+});
+
+const { Composer } = createComposer<BaseCtx, { message: MessageCtx }, typeof methods>({
+  discriminator: (ctx) => ctx.updateType,
+  methods,
+});
+
+// Derives flow into the handler automatically — no annotation needed:
+new Composer()
+  .derive(() => ({ user: { id: 1, name: "Alice" } }))
+  .command("start", (ctx, next) => {
+    ctx.user.id;   // ✅ typed — inferred from ContextOf<TThis>
+    ctx.text;      // ✅ string | undefined — from MessageCtx
+    return next();
+  });
+```
+
+#### `ContextOf<T>` — extract the current context type
+
+Extracts `TOut` from a Composer or EventComposer instance type. Used as `ContextOf<TThis>` in custom method signatures to automatically capture all accumulated derives at the call site.
+
+```ts
+import type { ContextOf } from "@gramio/composer";
+
+// From a plain Composer:
+type Ctx = ContextOf<Composer<{ a: number }, { a: number; b: string }>>;
+//   Ctx = { a: number; b: string }
+
+// In a custom method — TThis is inferred from the caller instance:
+command<TThis extends ComposerLike<TThis>>(
+  this: TThis,
+  handler: Middleware<ContextOf<TThis>>,
+): TThis
+```
+
+#### `ComposerLike<T>` — minimal structural type for `this` constraints
+
+A minimal interface `{ on(event: any, handler: any): T }` used as an F-bounded constraint on `TThis`. Makes `this.on(...)` fully typed and return `TThis` without casts.
+
+```ts
+import type { ComposerLike } from "@gramio/composer";
+
+// Constraint in a custom method:
+command<TThis extends ComposerLike<TThis>>(this: TThis, ...): TThis {
+  return this.on("message", inner); // returns TThis — no `as TThis` needed
+}
+```
 
 ### `EventQueue`
 
