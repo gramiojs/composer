@@ -719,4 +719,21 @@ describe("Custom methods receiving derive types", () => {
 		type Out1 = ContextOf<Composer<{ a: number }, { a: number; b: string }>>;
 		expectTypeOf<Out1>().toEqualTypeOf<{ a: number; b: string }>();
 	});
+
+	it("ContextOf<typeof plugin> — naming a plugin's enriched context type", () => {
+		interface User { id: number; name: string }
+
+		const withUser = new Composer<{ userId: string }>()
+			.derive(async (_ctx): Promise<{ user: User }> => ({
+				user: { id: 1, name: "Alice" },
+			}));
+
+		type WithUser = ContextOf<typeof withUser>;
+
+		expectTypeOf<WithUser>().toExtend<{ userId: string; user: User }>();
+
+		// Usable as a standalone type — e.g. in a helper function signature
+		const requireAdmin = (ctx: WithUser) => ctx.user.id;
+		expectTypeOf(requireAdmin).toExtend<(ctx: WithUser) => number>();
+	});
 });

@@ -464,16 +464,31 @@ new Composer()
 
 #### `ContextOf<T>` — extract the current context type
 
-Extracts `TOut` from a Composer or EventComposer instance type. Used as `ContextOf<TThis>` in custom method signatures to automatically capture all accumulated derives at the call site.
+Extracts `TOut` (the fully accumulated context type after all `.derive()` and `.decorate()` calls) from a Composer or EventComposer instance type.
+
+**Naming a plugin's context type for reuse:**
 
 ```ts
 import type { ContextOf } from "@gramio/composer";
 
-// From a plain Composer:
-type Ctx = ContextOf<Composer<{ a: number }, { a: number; b: string }>>;
-//   Ctx = { a: number; b: string }
+const withUser = new Composer()
+  .derive(async (ctx) => ({
+    user: await db.getUser(ctx.userId),
+  }));
 
-// In a custom method — TThis is inferred from the caller instance:
+// Extract the enriched context — no manual conditional type needed
+export type WithUser = ContextOf<typeof withUser>;
+// WithUser = { userId: string } & { user: User }
+
+// Use it in standalone functions, other plugins, or type assertions:
+function requireAdmin(ctx: WithUser) {
+  if (!ctx.user.isAdmin) throw new Error("Forbidden");
+}
+```
+
+**In a custom method signature** — `ContextOf<TThis>` captures all derives accumulated at the call site:
+
+```ts
 command<TThis extends ComposerLike<TThis>>(
   this: TThis,
   handler: Middleware<ContextOf<TThis>>,
