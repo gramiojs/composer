@@ -274,6 +274,32 @@ app.extend(limit100); // applied
 app.extend(limit200); // applied (different seed)
 ```
 
+> [!WARNING]
+> **Dedup removes middleware at registration time — not at runtime per-request.**
+>
+> If a shared plugin (e.g. `withUser`) is extended only inside sub-composers, its
+> `derive` runs inside each sub-composer's isolation group. When dedup removes the
+> derive from the second sub-composer, `ctx.user` set in the first group is **not
+> visible** in the second — TypeScript types are correct, runtime value is `undefined`.
+>
+> **Fix:** extend the shared composer at the level where its data must be available,
+> and let sub-composers extend it only for type safety (dedup prevents double execution).
+>
+> ```ts
+> // ✅ correct — withUser runs once on the real ctx, both routers see ctx.user
+> app
+>   .extend(withUser)    // derive on real ctx
+>   .extend(adminRouter) // withUser inside → deduped (skipped)
+>   .extend(chatRouter); // withUser inside → deduped (skipped)
+>
+> // ⚠️  risky — works only if routers are mutually exclusive (one handles per update)
+> app
+>   .extend(adminRouter) // withUser runs in isolation group
+>   .extend(chatRouter); // withUser deduped → chatHandlers can't see ctx.user
+> ```
+>
+> See [`docs/layered-composers.md`](./docs/layered-composers.md) for the full breakdown.
+
 ### `createComposer(config)` — Event System
 
 Factory that creates a Composer class with `.on()` event discrimination.
