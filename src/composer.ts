@@ -6,6 +6,8 @@ import type {
 	DeriveHandler,
 	ErrorHandler,
 	LazyFactory,
+	MacroDef,
+	MacroDefinitions,
 	Middleware,
 	MiddlewareInfo,
 	MiddlewareType,
@@ -19,7 +21,7 @@ import type {
 export type RouteHandler<T extends object> =
 	| Middleware<T>
 	| Middleware<T>[]
-	| Composer<any, any, any>;
+	| Composer<any, any, any, any>;
 
 /** Route builder passed to the builder-callback overload of route() */
 export interface RouteBuilder<T extends object, K extends string> {
@@ -50,6 +52,7 @@ export class Composer<
 	TIn extends object = {},
 	TOut extends TIn = TIn,
 	TExposed extends object = {},
+	TMacros extends MacroDefinitions = {},
 > {
 	"~" = {
 		middlewares: [] as ScopedMiddleware<any>[],
@@ -63,6 +66,9 @@ export class Composer<
 			{ new (...args: any): any; prototype: Error }
 		>,
 		tracer: undefined as TraceHandler | undefined,
+		macros: {} as Record<string, MacroDef<any, any>>,
+		/** Phantom type accessor — never set at runtime, used by `ContextOf<T>` */
+		Out: undefined as unknown as TOut,
 	};
 
 	constructor(options?: ComposerOptions) {
@@ -72,6 +78,31 @@ export class Composer<
 
 	invalidate(): void {
 		this["~"].compiled = null;
+	}
+
+	// ─── Macro Methods ───
+
+	/** Register a single named macro */
+	macro<const Name extends string, TDef extends MacroDef<any, any>>(
+		name: Name,
+		definition: TDef,
+	): Composer<TIn, TOut, TExposed, TMacros & Record<Name, TDef>>;
+
+	/** Register multiple macros at once */
+	macro<const TDefs extends Record<string, MacroDef<any, any>>>(
+		definitions: TDefs,
+	): Composer<TIn, TOut, TExposed, TMacros & TDefs>;
+
+	macro(
+		nameOrDefs: string | Record<string, MacroDef<any, any>>,
+		definition?: MacroDef<any, any>,
+	): any {
+		if (typeof nameOrDefs === "string") {
+			this["~"].macros[nameOrDefs] = definition!;
+		} else {
+			Object.assign(this["~"].macros, nameOrDefs);
+		}
+		return this;
 	}
 
 	// ─── Middleware Methods ───
@@ -98,9 +129,11 @@ export class Composer<
 		return this as any;
 	}
 
-	use(
-		...middleware: Middleware<TOut>[]
-	): Composer<TIn, TOut, TExposed> {
+	use(handler: Middleware<TOut>): this;
+	use<Patch extends object>(handler: Middleware<TOut & Patch>): this;
+	use(...middleware: Middleware<TOut>[]): Composer<TIn, TOut, TExposed>;
+	// biome-ignore lint/suspicious/noExplicitAny: overload implementation signature
+	use(...middleware: Middleware<any>[]): this {
 		for (const fn of middleware) {
 			this["~"].middlewares.push({ fn, scope: "local", type: "use", name: fn.name || undefined });
 		}
@@ -392,9 +425,9 @@ export class Composer<
 		return this;
 	}
 
-	extend<UIn extends object, UOut extends UIn, UExposed extends object>(
-		other: Composer<UIn, UOut, UExposed>,
-	): Composer<TIn, TOut & UExposed, TExposed> {
+	extend<UIn extends object, UOut extends UIn, UExposed extends object, UMacros extends MacroDefinitions = {}>(
+		other: Composer<UIn, UOut, UExposed, UMacros>,
+	): Composer<TIn, TOut & UExposed, TExposed, TMacros & UMacros> {
 		// 1. Dedup check
 		if (other["~"].name) {
 			const key = `${other["~"].name}:${JSON.stringify(other["~"].seed ?? null)}`;
@@ -410,8 +443,9 @@ export class Composer<
 			this["~"].extended.add(key);
 		}
 
-		// 4. Merge error definitions and error handlers
+		// 4. Merge error definitions, error handlers, and macros
 		Object.assign(this["~"].errorsDefinitions, other["~"].errorsDefinitions);
+		Object.assign(this["~"].macros, other["~"].macros);
 		this["~"].onErrors.push(...other["~"].onErrors);
 
 		// 5. Process other's middleware by scope, skipping transitively-deduped plugins

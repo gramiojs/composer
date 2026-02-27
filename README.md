@@ -119,13 +119,21 @@ app.guard(
 );
 ```
 
-**Without handlers** — gate the chain: if false, stop this composer's remaining middleware:
+**Without handlers (gate mode)** — if false, stop this composer's remaining middleware. When a type predicate is used, downstream context is narrowed:
 
 ```ts
 // Only admin can reach subsequent middleware
 app
   .guard((ctx) => ctx.role === "admin")
   .use(adminOnlyHandler);  // skipped if not admin
+
+// Type predicate narrows context for all downstream handlers
+app
+  .guard((ctx): ctx is Ctx & { text: string } => "text" in ctx)
+  .on("message", (ctx, next) => {
+    ctx.text; // string (narrowed by guard)
+    return next();
+  });
 ```
 
 When used inside an `extend()`-ed plugin, the guard stops the plugin's chain but the parent continues:
@@ -331,6 +339,74 @@ const app = new Composer()
   });
 ```
 
+#### `.on()` with filters
+
+**Filter-only (no event name)** — the 2-arg `on(filter, handler)` applies the filter to **all** events without discriminating by event type:
+
+```ts
+// Type-narrowing filter — handler sees narrowed context across all compatible events
+app.on(
+  (ctx): ctx is { text: string } => typeof (ctx as any).text === "string",
+  (ctx, next) => {
+    ctx.text; // string (narrowed)
+    return next();
+  },
+);
+
+// Boolean filter — no narrowing, handler gets base TOut
+app.on(
+  (ctx) => ctx.updateType === "message",
+  (ctx, next) => {
+    // no type narrowing, full context
+    return next();
+  },
+);
+```
+
+**Event + filter** — the 3-arg `on(event, filter, handler)` supports both type-narrowing predicates and boolean filters:
+
+```ts
+// Type-narrowing filter — handler sees narrowed context
+app.on(
+  "message",
+  (ctx): ctx is MessageCtx & { text: string } => ctx.text !== undefined,
+  (ctx, next) => {
+    ctx.text; // string (narrowed, not string | undefined)
+    return next();
+  },
+);
+
+// Boolean filter — no narrowing, handler sees full context
+app.on(
+  "message",
+  (ctx) => ctx.text !== undefined,
+  (ctx, next) => {
+    ctx.text; // string | undefined (not narrowed)
+    return next();
+  },
+);
+```
+
+The 2-arg `on()` also accepts an optional `Patch` generic for context extensions (useful in custom methods):
+
+```ts
+app.on<"message", { args: string }>("message", (ctx, next) => {
+  ctx.args; // string — type-safe without casting
+  return next();
+});
+```
+
+`.use()` supports the same `Patch` generic — handy when a custom method enriches context before delegating to a user-provided handler:
+
+```ts
+app.use<{ args: string }>((ctx, next) => {
+  ctx.args; // string — type-safe without casting
+  return next();
+});
+```
+
+`Patch` does not change `TOut` — it is a local escape hatch for one handler, not a permanent context extension. Use `derive()` when you want the addition to propagate to all downstream middleware.
+
 #### `types` + `eventTypes()` — phantom type inference
 
 TypeScript cannot partially infer type arguments, so when you need both `TEventMap` and `TMethods` inferred together, use the `types` phantom field with the `eventTypes()` helper instead of explicit type parameters:
@@ -348,7 +424,9 @@ const { Composer } = createComposer({
 
 #### `methods` — custom prototype methods
 
-Inject framework-specific DX sugar directly onto the Composer prototype via the `methods` config option. Method bodies receive `this` typed as the full `EventComposer`, giving access to `.on()`, `.use()`, `.derive()`, etc.
+Inject framework-specific DX sugar directly onto the Composer prototype. Custom methods are preserved through **all** method chains (`on`, `use`, `derive`, `extend`, etc.). A runtime conflict check throws if a method name collides with a built-in.
+
+**Simple methods** (no access to accumulated derives) work directly in `methods`:
 
 ```ts
 const { Composer } = createComposer({
@@ -369,13 +447,92 @@ const { Composer } = createComposer({
     },
   },
 });
-
-const bot = new Composer();
-bot.hears(/hello/, handler);            // custom method
-bot.on("message", h).hears(/hi/, h2);  // chaining works — TMethods preserved
 ```
 
-Custom methods are preserved through **all** method chains (`on`, `use`, `derive`, `extend`, etc.). A runtime conflict check throws if a method name collides with a built-in (e.g. `on`, `use`, `derive`).
+**Methods that receive accumulated derives** require two steps. TypeScript cannot infer generic method signatures when `TMethods` is nested inside the return type of `createComposer`, so use `defineComposerMethods` first — its return type is directly `TMethods`, which preserves generic signatures. Then pass `typeof methods` as the 3rd type argument.
+
+Use `ComposerLike<TThis>` as an F-bounded constraint so that `this.on(...)` is fully typed and returns `TThis` — no casts needed.
+
+**Pattern: `this: TThis` + `ContextOf<TThis>` — zero annotation at the call site:**
+
+```ts
+import { createComposer, defineComposerMethods, eventTypes } from "@gramio/composer";
+import type { ComposerLike, ContextOf, Middleware } from "@gramio/composer";
+
+const methods = defineComposerMethods({
+  command<TThis extends ComposerLike<TThis>>(
+    this: TThis,
+    name: string,
+    handler: Middleware<MessageCtx & ContextOf<TThis>>,
+  ): TThis {
+    const inner: Middleware<MessageCtx & ContextOf<TThis>> = (ctx, next) => {
+      if (ctx.text === `/${name}`) return handler(ctx, next);
+      return next();
+    };
+    return this.on("message", inner);
+  },
+});
+
+const { Composer } = createComposer<BaseCtx, { message: MessageCtx }, typeof methods>({
+  discriminator: (ctx) => ctx.updateType,
+  methods,
+});
+
+// Derives flow into the handler automatically — no annotation needed:
+new Composer()
+  .derive(() => ({ user: { id: 1, name: "Alice" } }))
+  .command("start", (ctx, next) => {
+    ctx.user.id;   // ✅ typed — inferred from ContextOf<TThis>
+    ctx.text;      // ✅ string | undefined — from MessageCtx
+    return next();
+  });
+```
+
+#### `ContextOf<T>` — extract the current context type
+
+Extracts `TOut` (the fully accumulated context type after all `.derive()` and `.decorate()` calls) from a Composer or EventComposer instance type.
+
+**Naming a plugin's context type for reuse:**
+
+```ts
+import type { ContextOf } from "@gramio/composer";
+
+const withUser = new Composer()
+  .derive(async (ctx) => ({
+    user: await db.getUser(ctx.userId),
+  }));
+
+// Extract the enriched context — no manual conditional type needed
+export type WithUser = ContextOf<typeof withUser>;
+// WithUser = { userId: string } & { user: User }
+
+// Use it in standalone functions, other plugins, or type assertions:
+function requireAdmin(ctx: WithUser) {
+  if (!ctx.user.isAdmin) throw new Error("Forbidden");
+}
+```
+
+**In a custom method signature** — `ContextOf<TThis>` captures all derives accumulated at the call site:
+
+```ts
+command<TThis extends ComposerLike<TThis>>(
+  this: TThis,
+  handler: Middleware<ContextOf<TThis>>,
+): TThis
+```
+
+#### `ComposerLike<T>` — minimal structural type for `this` constraints
+
+A minimal interface `{ on(event: any, handler: any): T }` used as an F-bounded constraint on `TThis`. Makes `this.on(...)` fully typed and return `TThis` without casts.
+
+```ts
+import type { ComposerLike } from "@gramio/composer";
+
+// Constraint in a custom method:
+command<TThis extends ComposerLike<TThis>>(this: TThis, ...): TThis {
+  return this.on("message", inner); // returns TThis — no `as TThis` needed
+}
+```
 
 ### `EventQueue`
 
@@ -394,6 +551,88 @@ queue.addBatch(events);
 
 // Graceful shutdown (waits up to 5s for pending handlers)
 await queue.stop(5000);
+```
+
+### Macro System
+
+Declarative handler options inspired by [Elysia macros](https://elysiajs.com/patterns/macro.md). Register reusable behaviors (guards, rate-limits, auth) as macros, then activate them via an options object on handler methods.
+
+#### `macro(name, definition)` / `macro(definitions)`
+
+Register macros on a Composer or EventComposer instance.
+
+```ts
+import { Composer, type MacroDef, type ContextCallback } from "@gramio/composer";
+
+// Boolean shorthand macro — plain hooks object
+const onlyAdmin: MacroDef<void, {}> = {
+  preHandler: (ctx, next) => {
+    if (ctx.role !== "admin") return; // stops chain
+    return next();
+  },
+};
+
+// Parameterized macro — function receiving options
+interface ThrottleOptions {
+  limit: number;
+  window?: number;
+  onLimit?: ContextCallback; // ← replaced with actual ctx type at call site
+}
+
+const throttle: MacroDef<ThrottleOptions, {}> = (opts) => ({
+  preHandler: createThrottleMiddleware(opts),
+});
+
+// Macro with derive — enriches handler context
+interface AuthDerived { user: { id: number; name: string } }
+
+const auth: MacroDef<void, AuthDerived> = {
+  derive: async (ctx) => {
+    const user = await getUser(ctx.token);
+    if (!user) return; // void = stop chain (guard behavior)
+    return { user };
+  },
+};
+
+const app = new Composer()
+  .macro("onlyAdmin", onlyAdmin)
+  .macro({ throttle, auth }); // batch registration
+```
+
+#### `buildFromOptions(macros, options, handler)`
+
+Runtime helper that composes a handler with macro hooks. Used internally by frameworks to wire macros into handler methods.
+
+```ts
+import { buildFromOptions } from "@gramio/composer";
+
+// Execution order:
+// 1. options.preHandler[] (explicit guards — user controls order)
+// 2. Per-macro in options property order:
+//    a. macro.preHandler (guard middleware)
+//    b. macro.derive (context enrichment; void = stop chain)
+// 3. Main handler
+const composed = buildFromOptions(
+  app["~"].macros,
+  { auth: true, throttle: { limit: 5 } },
+  mainHandler,
+);
+```
+
+#### Macro Types
+
+```ts
+import type {
+  MacroDef,          // Macro definition (function or hooks object)
+  MacroHooks,        // { preHandler?, derive? }
+  MacroDefinitions,  // Record<string, MacroDef<any, any>>
+  ContextCallback,   // Marker type for context-aware callbacks
+  WithCtx,           // Recursively replaces ContextCallback with real ctx type
+  HandlerOptions,    // Builds the options parameter type for handler methods
+  DeriveFromOptions, // Collects derive types from activated macros
+  MacroOptionType,   // Extracts option type from MacroDef
+  MacroDeriveType,   // Extracts derive return type from MacroDef
+} from "@gramio/composer";
 ```
 
 ### Utilities

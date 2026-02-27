@@ -8,6 +8,8 @@ import type {
 	DeriveHandler,
 	ErrorHandler,
 	LazyFactory,
+	MacroDef,
+	MacroDefinitions,
 	MaybeArray,
 	Middleware,
 	MiddlewareInfo,
@@ -35,6 +37,41 @@ type ResolveEventCtx<
 		& (E extends keyof TDerives ? TDerives[E] : {})
 	: never;
 
+/**
+ * Given an event map and a Narrowing type, yields the union of event names
+ * whose context type contains all keys from Narrowing.
+ */
+export type CompatibleEvents<
+	TEventMap extends Record<string, any>,
+	Narrowing,
+> = {
+	[E in keyof TEventMap & string]:
+		keyof Narrowing & string extends keyof TEventMap[E] ? E : never
+}[keyof TEventMap & string];
+
+/**
+ * Minimal structural type for constraining `this` in custom composer methods.
+ *
+ * Use as an F-bounded constraint on `TThis` so that `this.on(...)` is typed
+ * and returns `TThis` without requiring `as any`:
+ *
+ * @example
+ * ```ts
+ * command<TThis extends ComposerLike<TThis>>(
+ *   this: TThis,
+ *   name: string,
+ *   handler: Middleware<MsgCtx & ContextOf<TThis>>,
+ * ): TThis {
+ *   const inner: Middleware<MsgCtx & ContextOf<TThis>> = (ctx, next) => {
+ *     if (ctx.text === `/${name}`) return handler(ctx, next);
+ *     return next();
+ *   };
+ *   return this.on("message", inner); // typed — no cast needed
+ * }
+ * ```
+ */
+export type ComposerLike<T = unknown> = { on(event: any, handler: any): T };
+
 /** EventComposer interface — Composer + .on() + per-event derive tracking + custom methods */
 export interface EventComposer<
 	TBase extends object,
@@ -44,18 +81,53 @@ export interface EventComposer<
 	TExposed extends object = {},
 	TDerives extends Record<string, object> = {},
 	TMethods extends Record<string, (...args: any[]) => any> = {},
+	TMacros extends MacroDefinitions = {},
 > {
 	// --- Methods that preserve generics → return `this` (keeps TMethods in chain) ---
 
+	// Filter-only overload (type-narrowing predicate — auto-discovers matching events)
+	on<Narrowing>(
+		filter: (ctx: any) => ctx is Narrowing,
+		handler: Middleware<
+			ResolveEventCtx<TOut, TEventMap, TDerives, CompatibleEvents<TEventMap, Narrowing>> & Narrowing
+		>,
+	): this;
+
+	// Filter-only overload (boolean — no narrowing, handler gets TOut)
+	on(
+		filter: (ctx: TOut) => boolean,
+		handler: Middleware<TOut>,
+	): this;
+
+	// Filter overload (type-narrowing predicate)
+	on<E extends keyof TEventMap & string, Narrowing>(
+		event: MaybeArray<E>,
+		filter: (ctx: any) => ctx is Narrowing,
+		handler: Middleware<ResolveEventCtx<TOut, TEventMap, TDerives, E> & Narrowing>,
+	): this;
+
+	// Filter overload (boolean, no narrowing)
 	on<E extends keyof TEventMap & string>(
 		event: MaybeArray<E>,
+		filter: (ctx: ResolveEventCtx<TOut, TEventMap, TDerives, E>) => boolean,
 		handler: Middleware<ResolveEventCtx<TOut, TEventMap, TDerives, E>>,
 	): this;
 
-	use(
-		...middleware: Middleware<TOut>[]
+	// Existing 2-arg with optional Patch generic
+	on<E extends keyof TEventMap & string, Patch extends object = {}>(
+		event: MaybeArray<E>,
+		handler: Middleware<ResolveEventCtx<TOut, TEventMap, TDerives, E> & Patch>,
 	): this;
 
+	use<Patch extends object>(handler: Middleware<TOut & Patch>): this;
+	use(...middleware: Middleware<TOut>[]): this;
+
+	// Gate with type predicate → narrow TOut for downstream handlers
+	guard<Narrowing>(
+		predicate: (context: any) => context is Narrowing,
+	): EventComposer<TBase, TEventMap, TIn, TOut & Narrowing, TExposed, TDerives, TMethods, TMacros> & TMethods;
+
+	// Boolean predicate or with middleware → no narrowing
 	guard<S extends TOut>(
 		predicate: ((context: TOut) => context is S) | ((context: TOut) => boolean | Promise<boolean>),
 		...middleware: Middleware<any>[]
@@ -111,43 +183,56 @@ export interface EventComposer<
 
 	decorate<D extends object>(
 		values: D,
-	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed, TDerives, TMethods> & TMethods;
+	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed, TDerives, TMethods, TMacros> & TMethods;
 	decorate<D extends object>(
 		values: D,
 		options: { as: "scoped" | "global" },
-	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed & D, TDerives, TMethods> & TMethods;
+	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed & D, TDerives, TMethods, TMacros> & TMethods;
 
 	derive<D extends object>(
 		handler: DeriveHandler<TOut, D>,
-	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed, TDerives, TMethods> & TMethods;
+	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed, TDerives, TMethods, TMacros> & TMethods;
 	derive<D extends object>(
 		handler: DeriveHandler<TOut, D>,
 		options: { as: "scoped" | "global" },
-	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed & D, TDerives, TMethods> & TMethods;
+	): EventComposer<TBase, TEventMap, TIn, TOut & D, TExposed & D, TDerives, TMethods, TMacros> & TMethods;
 	// Event-specific derive — adds to TDerives[E], NOT to global TOut
 	derive<E extends keyof TEventMap & string, D extends object>(
 		event: MaybeArray<E>,
 		handler: DeriveHandler<ResolveEventCtx<TOut, TEventMap, TDerives, E>, D>,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives & { [K in E]: D }, TMethods> & TMethods;
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives & { [K in E]: D }, TMethods, TMacros> & TMethods;
 
 	when<UOut extends TOut>(
 		condition: boolean,
 		fn: (composer: Composer<TOut, TOut, {}>) => Composer<TOut, UOut, any>,
-	): EventComposer<TBase, TEventMap, TIn, TOut & Partial<Omit<UOut, keyof TOut>>, TExposed, TDerives, TMethods> & TMethods;
+	): EventComposer<TBase, TEventMap, TIn, TOut & Partial<Omit<UOut, keyof TOut>>, TExposed, TDerives, TMethods, TMacros> & TMethods;
 
 	as(
 		scope: "scoped" | "global",
-	): EventComposer<TBase, TEventMap, TIn, TOut, TOut, TDerives, TMethods> & TMethods;
+	): EventComposer<TBase, TEventMap, TIn, TOut, TOut, TDerives, TMethods, TMacros> & TMethods;
 
-	// Extend another EventComposer — merges TDerives
-	extend<UIn extends TBase, UOut extends UIn, UExposed extends object, UDerives extends Record<string, object>>(
-		other: EventComposer<TBase, TEventMap, UIn, UOut, UExposed, UDerives, any>,
-	): EventComposer<TBase, TEventMap, TIn, TOut & UExposed, TExposed, TDerives & UDerives, TMethods> & TMethods;
+	// Extend another EventComposer — merges TDerives and TMacros
+	extend<UIn extends TBase, UOut extends UIn, UExposed extends object, UDerives extends Record<string, object>, UMacros extends MacroDefinitions = {}>(
+		other: EventComposer<TBase, TEventMap, UIn, UOut, UExposed, UDerives, any, UMacros>,
+	): EventComposer<TBase, TEventMap, TIn, TOut & UExposed, TExposed, TDerives & UDerives, TMethods, TMacros & UMacros> & TMethods;
 
-	// Extend plain Composer — TDerives unchanged
-	extend<UIn extends object, UOut extends UIn, UExposed extends object>(
-		other: Composer<UIn, UOut, UExposed>,
-	): EventComposer<TBase, TEventMap, TIn, TOut & UExposed, TExposed, TDerives, TMethods> & TMethods;
+	// Extend plain Composer — merges TMacros, TDerives unchanged
+	extend<UIn extends object, UOut extends UIn, UExposed extends object, UMacros extends MacroDefinitions = {}>(
+		other: Composer<UIn, UOut, UExposed, UMacros>,
+	): EventComposer<TBase, TEventMap, TIn, TOut & UExposed, TExposed, TDerives, TMethods, TMacros & UMacros> & TMethods;
+
+	// ─── Macro Methods ───
+
+	/** Register a single named macro */
+	macro<const Name extends string, TDef extends MacroDef<any, any>>(
+		name: Name,
+		definition: TDef,
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives, TMethods, TMacros & Record<Name, TDef>> & TMethods;
+
+	/** Register multiple macros at once */
+	macro<const TDefs extends Record<string, MacroDef<any, any>>>(
+		definitions: TDefs,
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives, TMethods, TMacros & TDefs> & TMethods;
 
 	inspect(): MiddlewareInfo[];
 	trace(handler: TraceHandler): this;
@@ -167,7 +252,10 @@ export interface EventComposer<
 			{ new (...args: any): any; prototype: Error }
 		>;
 		tracer: TraceHandler | undefined;
+		macros: Record<string, MacroDef<any, any>>;
 		Derives: TDerives;
+		/** Phantom type accessor — never set at runtime, used by `ContextOf<T>` */
+		Out: TOut;
 	};
 	invalidate(): void;
 }
@@ -182,9 +270,104 @@ export interface EventComposerConstructor<
 		TOut extends TIn = TIn,
 		TExposed extends object = {},
 		TDerives extends Record<string, object> = {},
+		TMacros extends MacroDefinitions = {},
 	>(
 		options?: ComposerOptions,
-	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives, TMethods> & TMethods;
+	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives, TMethods, TMacros> & TMethods;
+}
+
+/**
+ * Extracts the current accumulated context type (`TOut`) from an EventComposer
+ * or Composer instance type.
+ *
+ * Use with a `this: TThis` parameter in custom methods to get automatic
+ * derive type inference — the handler receives all types from previous `.derive()` calls
+ * without requiring explicit annotation at the call site.
+ *
+ * @example
+ * ```ts
+ * const { Composer } = createComposer({
+ *   methods: {
+ *     // Automatic: caller's derives are inferred into the handler
+ *     command<TThis>(
+ *       this: TThis,
+ *       name: string,
+ *       handler: Middleware<MessageCtx & ContextOf<TThis>>,
+ *     ) {
+ *       return (this as any).on("message", (ctx: any, next: any) => {
+ *         if (ctx.text === `/${name}`) return handler(ctx, next);
+ *         return next();
+ *       }) as TThis;
+ *     },
+ *
+ *     // Manual: caller declares which derives they need via Patch generic
+ *     hears<Patch extends object = {}>(
+ *       trigger: string,
+ *       handler: Middleware<MessageCtx & Patch>,
+ *     ) {
+ *       return this.on<"message", Patch>("message", (ctx, next) => {
+ *         if (ctx.text === trigger) return handler(ctx, next);
+ *         return next();
+ *       });
+ *     },
+ *   },
+ * });
+ *
+ * // With ContextOf — no type annotation needed at call site:
+ * new Composer()
+ *   .derive(() => ({ user: { id: 1 } }))
+ *   .command("start", (ctx) => ctx.user.id); // ✅ inferred automatically
+ *
+ * // With Patch — caller declares what they need:
+ * new Composer()
+ *   .derive(() => ({ user: { id: 1 } }))
+ *   .hears<{ user: { id: number } }>("hello", (ctx) => ctx.user.id); // ✅
+ * ```
+ */
+export type ContextOf<T> = T extends { "~": { Out: infer O } } ? O : never;
+
+/**
+ * Helper to define custom composer methods with full TypeScript inference.
+ *
+ * TypeScript cannot infer generic method signatures when they're passed directly
+ * inside `createComposer({ methods: { ... } })` because `TMethods` is buried
+ * inside the nested return type `{ Composer: EventComposerConstructor<..., TMethods> }`.
+ *
+ * This helper has return type `TMethods` directly — which lets TypeScript preserve
+ * generic method signatures. Pass the result (via `typeof`) as the 3rd type argument
+ * to `createComposer`:
+ *
+ * @example
+ * ```ts
+ * const methods = defineComposerMethods({
+ *   // Pattern: `this: TThis` + `ContextOf<TThis>` — zero annotation at call site
+ *   command<TThis>(
+ *     this: TThis,
+ *     name: string,
+ *     handler: Middleware<MessageCtx & ContextOf<TThis>>,
+ *   ): TThis {
+ *     return (this as any).on("message", (ctx: any, next: any) => {
+ *       if (ctx.text === `/${name}`) return handler(ctx, next);
+ *       return next();
+ *     }) as TThis;
+ *   },
+ * });
+ *
+ * const { Composer } = createComposer<Base, EventMap, typeof methods>({
+ *   discriminator: (ctx) => ctx.updateType,
+ *   methods,
+ * });
+ *
+ * // No annotation needed — derives flow in automatically:
+ * new Composer()
+ *   .derive(() => ({ user: { id: 1 } }))
+ *   .command("start", (ctx) => ctx.user.id); // ✅
+ * ```
+ */
+export function defineComposerMethods<
+	TMethods extends Record<string, (...args: any[]) => any>,
+>(methods: TMethods): TMethods {
+	return methods;
 }
 
 /**
@@ -223,18 +406,38 @@ export function createComposer<
 	compose: typeof compose;
 	EventQueue: typeof EventQueue;
 } {
-	class EventComposerImpl extends Composer<any, any, any> {
+	class EventComposerImpl extends Composer<any, any, any, any> {
 		on(
-			event: string | string[],
-			handler: Middleware<any>,
+			eventOrFilter: string | string[] | ((ctx: any) => boolean),
+			filterOrHandler: Middleware<any> | ((ctx: any) => boolean),
+			handler?: Middleware<any>,
 		) {
-			const events = Array.isArray(event) ? event : [event];
+			// Filter-only mode: first arg is a function
+			if (typeof eventOrFilter === "function") {
+				const filter = eventOrFilter as (ctx: any) => boolean;
+				const actualHandler = filterOrHandler as Middleware<any>;
+				const filterLabel = filter.name || "filter";
+				const mw: Middleware<any> = (ctx: any, next: any) => {
+					if (filter(ctx)) return actualHandler(ctx, next);
+					return next();
+				};
+				nameMiddleware(mw, "on", filterLabel);
+				this["~"].middlewares.push({ fn: mw, scope: "local", type: "on", name: filterLabel });
+				this.invalidate();
+				return this;
+			}
+
+			// Event-based mode (existing logic)
+			const events = Array.isArray(eventOrFilter) ? eventOrFilter : [eventOrFilter];
 			const eventLabel = events.join("|");
+
+			const actualHandler = handler ?? (filterOrHandler as Middleware<any>);
+			const filter = handler ? (filterOrHandler as (ctx: any) => boolean) : undefined;
+
 			const mw: Middleware<any> = (ctx: any, next: any) => {
-				if (events.includes(config.discriminator(ctx))) {
-					return handler(ctx, next);
-				}
-				return next();
+				if (!events.includes(config.discriminator(ctx))) return next();
+				if (filter && !filter(ctx)) return next();
+				return actualHandler(ctx, next);
 			};
 			nameMiddleware(mw, "on", eventLabel);
 			this["~"].middlewares.push({ fn: mw, scope: "local", type: "on", name: eventLabel });
