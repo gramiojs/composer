@@ -1,6 +1,6 @@
 {
 	"name": "@gramio/composer",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"description": "General-purpose, type-safe middleware composition library for TypeScript",
 	"main": "dist/index.cjs",
 	"module": "dist/index.js",
