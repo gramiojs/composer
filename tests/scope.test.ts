@@ -31,6 +31,32 @@ describe("Scope system", () => {
 	// ─── extend() with scopes ───
 
 	describe("extend() — local scope (default)", () => {
+		it("local middleware can access WeakMap-backed private-field properties on the original context", async () => {
+			// Simulates GramIO contexts where properties like `text`/`caption` are
+			// stored in a WeakMap keyed by the original context instance.
+			const _secret = new WeakMap<object, number>();
+			class FakeContext {
+				constructor(value: number) {
+					_secret.set(this, value);
+				}
+				get secret(): number {
+					if (!_secret.has(this)) throw new Error("Cannot read from private field");
+					return _secret.get(this)!;
+				}
+			}
+
+			let saw: number | undefined;
+			const plugin = new Composer()
+				.use((ctx: FakeContext, next) => {
+					saw = ctx.secret; // must not throw
+					return next();
+				});
+
+			const app = new Composer<FakeContext>().extend(plugin);
+			await app.run(new FakeContext(7));
+			expect(saw).toBe(7);
+		});
+
 		it("local middleware is isolated — derives don't leak", async () => {
 			const plugin = new Composer()
 				.derive(() => ({ secret: 42 }))

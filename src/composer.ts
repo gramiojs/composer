@@ -376,8 +376,14 @@ export class Composer<
 
 		const chain = compose(group["~"].middlewares.map((m) => m.fn));
 		const mw: Middleware<any> = async (ctx, next) => {
-			const scopedCtx = Object.create(ctx);
-			await chain(scopedCtx, noopNext);
+			const preKeys = new Set(Object.keys(ctx as object));
+			const snapshot: Record<string, unknown> = {};
+			for (const key of preKeys) snapshot[key] = (ctx as Record<string, unknown>)[key];
+			await chain(ctx, noopNext);
+			for (const key of Object.keys(ctx as object)) {
+				if (!preKeys.has(key)) delete (ctx as Record<string, unknown>)[key];
+			}
+			Object.assign(ctx as object, snapshot);
 			return next();
 		};
 		nameMiddleware(mw, "group");
@@ -425,8 +431,14 @@ export class Composer<
 		if (localMws.length > 0) {
 			const chain = compose(localMws.map((m) => m.fn));
 			const isolated: Middleware<any> = async (ctx, next) => {
-				const scopedCtx = Object.create(ctx);
-				await chain(scopedCtx, noopNext);
+				const preKeys = new Set(Object.keys(ctx as object));
+				const snapshot: Record<string, unknown> = {};
+				for (const key of preKeys) snapshot[key] = (ctx as Record<string, unknown>)[key];
+				await chain(ctx, noopNext);
+				for (const key of Object.keys(ctx as object)) {
+					if (!preKeys.has(key)) delete (ctx as Record<string, unknown>)[key];
+				}
+				Object.assign(ctx as object, snapshot);
 				return next();
 			};
 			nameMiddleware(isolated, "extend", pluginName);

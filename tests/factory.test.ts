@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import type { Middleware } from "../src/types.ts";
 import { createComposer, eventTypes } from "../src/factory.ts";
+import type { Middleware } from "../src/types.ts";
 
 interface BaseCtx {
 	updateType: string;
