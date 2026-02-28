@@ -57,6 +57,24 @@ describe("Scope system", () => {
 			expect(saw).toBe(7);
 		});
 
+		it("does not throw when context has non-configurable properties (e.g. GramIO contexts)", async () => {
+			// GramIO defines some context properties with configurable: false via
+			// Object.defineProperty. `delete` on such properties throws in strict mode.
+			const ctx: Record<string, unknown> = {};
+			Object.defineProperty(ctx, "text", { value: "/start", writable: true, enumerable: true, configurable: false });
+
+			let saw: unknown;
+			const plugin = new Composer()
+				.use((c: typeof ctx, next) => {
+					saw = c.text;
+					return next();
+				});
+
+			const app = new Composer<typeof ctx>().extend(plugin);
+			await expect(app.run(ctx)).resolves.toBeUndefined();
+			expect(saw).toBe("/start");
+		});
+
 		it("local middleware is isolated — derives don't leak", async () => {
 			const plugin = new Composer()
 				.derive(() => ({ secret: 42 }))

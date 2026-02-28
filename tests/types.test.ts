@@ -271,6 +271,52 @@ describe("EventComposer types", () => {
 	});
 });
 
+// ─── derive() with event array + as("scoped") + extend() ───
+
+describe("derive([e1, e2], handler).as('scoped') + extend() types", () => {
+	interface Base3 { updateType: string }
+	interface MsgCtx3 extends Base3 { text?: string }
+	interface CbCtx3 extends Base3 { data?: string }
+	interface ExtraCtx3 extends Base3 { flag?: boolean }
+
+	const { Composer: EC3 } = createComposer<
+		Base3,
+		{ message: MsgCtx3; callback_query: CbCtx3; extra: ExtraCtx3 }
+	>({ discriminator: (ctx) => ctx.updateType });
+
+	it("both events in array see derived type in .on() after extend()", () => {
+		const plugin = new EC3({ name: "multi-plugin" })
+			.derive(["message", "callback_query"], () => ({ shared: "yes" }))
+			.as("scoped");
+
+		const app = new EC3().extend(plugin);
+
+		app.on("message", (ctx, next) => {
+			expectTypeOf(ctx).toMatchTypeOf<{ shared: string; text?: string }>();
+			return next();
+		});
+
+		app.on("callback_query", (ctx, next) => {
+			expectTypeOf(ctx).toMatchTypeOf<{ shared: string; data?: string }>();
+			return next();
+		});
+	});
+
+	it("event NOT in array does NOT see derived type in .on() after extend()", () => {
+		const plugin = new EC3({ name: "multi-plugin" })
+			.derive(["message", "callback_query"], () => ({ shared: "yes" }))
+			.as("scoped");
+
+		const app = new EC3().extend(plugin);
+
+		app.on("extra", (ctx, next) => {
+			// @ts-expect-error — shared is NOT derived for "extra"
+			ctx.shared;
+			return next();
+		});
+	});
+});
+
 // ─── decorate() types ───
 
 describe("decorate() types", () => {

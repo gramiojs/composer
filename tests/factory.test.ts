@@ -132,6 +132,49 @@ describe("createComposer() / EventComposer", () => {
 		await app.run({ updateType: "message" });
 		expect(saw).toBe("value");
 	});
+
+	it("derive([e1, e2], handler).as('scoped') — extend() propagates derive to both events at runtime", async () => {
+		const plugin = new Composer({ name: "multi-event-plugin" })
+			.derive(["message", "callback_query"], () => ({ shared: "from-plugin" }))
+			.as("scoped");
+
+		const seenBy: Record<string, unknown> = {};
+
+		const app = new Composer()
+			.extend(plugin)
+			.on("message", (ctx, next) => {
+				seenBy.message = (ctx as any).shared;
+				return next();
+			})
+			.on("callback_query", (ctx, next) => {
+				seenBy.callback_query = (ctx as any).shared;
+				return next();
+			});
+
+		await app.run({ updateType: "message" });
+		await app.run({ updateType: "callback_query" });
+
+		expect(seenBy.message).toBe("from-plugin");
+		expect(seenBy.callback_query).toBe("from-plugin");
+	});
+
+	it("derive([e1, e2], handler).as('scoped') — extend() does NOT apply derive to unlisted events", async () => {
+		const plugin = new Composer({ name: "multi-event-plugin" })
+			.derive(["message", "callback_query"], () => ({ shared: "from-plugin" }))
+			.as("scoped");
+
+		let sawOnUnknown: unknown = "sentinel";
+
+		const app = new Composer()
+			.extend(plugin)
+			.use((ctx, next) => {
+				sawOnUnknown = (ctx as any).shared;
+				return next();
+			});
+
+		await app.run({ updateType: "other" });
+		expect(sawOnUnknown).toBeUndefined();
+	});
 });
 
 describe("createComposer() custom methods", () => {

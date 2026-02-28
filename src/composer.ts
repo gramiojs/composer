@@ -414,7 +414,10 @@ export class Composer<
 			for (const key of preKeys) snapshot[key] = (ctx as Record<string, unknown>)[key];
 			await chain(ctx, noopNext);
 			for (const key of Object.keys(ctx as object)) {
-				if (!preKeys.has(key)) delete (ctx as Record<string, unknown>)[key];
+				if (!preKeys.has(key)) {
+					const desc = Object.getOwnPropertyDescriptor(ctx as object, key);
+					if (desc?.configurable) delete (ctx as Record<string, unknown>)[key];
+				}
 			}
 			Object.assign(ctx as object, snapshot);
 			return next();
@@ -470,7 +473,10 @@ export class Composer<
 				for (const key of preKeys) snapshot[key] = (ctx as Record<string, unknown>)[key];
 				await chain(ctx, noopNext);
 				for (const key of Object.keys(ctx as object)) {
-					if (!preKeys.has(key)) delete (ctx as Record<string, unknown>)[key];
+					if (!preKeys.has(key)) {
+						const desc = Object.getOwnPropertyDescriptor(ctx as object, key);
+						if (desc?.configurable) delete (ctx as Record<string, unknown>)[key];
+					}
 				}
 				Object.assign(ctx as object, snapshot);
 				return next();
