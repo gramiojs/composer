@@ -9,6 +9,7 @@ import type {
 	MaybeArray,
 	Scope,
 	ContextOf,
+	EventContextOf,
 	ComposerLike,
 } from "../src/index.ts";
 import { eventTypes } from "../src/index.ts";
@@ -781,5 +782,129 @@ describe("Custom methods receiving derive types", () => {
 		// Usable as a standalone type — e.g. in a helper function signature
 		const requireAdmin = (ctx: WithUser) => ctx.user.id;
 		expectTypeOf(requireAdmin).toExtend<(ctx: WithUser) => number>();
+	});
+});
+
+// ─── EventContextOf ───
+
+describe("EventContextOf types", () => {
+	interface Base { updateType: string }
+	interface MsgCtx extends Base { text?: string }
+	interface CbCtx extends Base { data?: string }
+	type Map = { message: MsgCtx; callback_query: CbCtx };
+
+	const { Composer: EC } = createComposer<Base, Map>({
+		discriminator: (ctx) => ctx.updateType,
+	});
+
+	it("EventContextOf includes TOut + TDerives[E]", () => {
+		const app = new EC()
+			.derive(() => ({ global: true }))
+			.derive("message", () => ({ perMessage: 42 }));
+
+		type Ctx = EventContextOf<typeof app, "message">;
+		expectTypeOf<Ctx>().toMatchTypeOf<{ global: boolean; perMessage: number }>();
+	});
+
+	it("EventContextOf does NOT include derives from other events", () => {
+		const app = new EC()
+			.derive("callback_query", () => ({ cbOnly: "yes" }));
+
+		type Ctx = EventContextOf<typeof app, "message">;
+		// cbOnly is NOT in message context
+		expectTypeOf<Ctx>().not.toMatchTypeOf<{ cbOnly: string }>();
+	});
+
+	it("EventContextOf works as handler type in command-like custom method", () => {
+		const methods = defineComposerMethods({
+			command<TThis extends ComposerLike<TThis>>(
+				this: TThis,
+				name: string,
+				handler: Middleware<MsgCtx & EventContextOf<TThis, "message">>,
+			): TThis {
+				return this.on("message", (ctx: any, next: Next) => {
+					if (ctx.text === `/${name}`) return handler(ctx, next);
+					return next();
+				});
+			},
+		});
+
+		const { Composer: EC2 } = createComposer<Base, Map, typeof methods>({
+			discriminator: (ctx) => ctx.updateType,
+			types: eventTypes<Map>(),
+			methods,
+		});
+
+		// Per-event derive IS visible in command handler — the key scenario
+		new EC2()
+			.derive("message", () => ({ t: (s: string) => s }))
+			.command("start", (ctx, next) => {
+				expectTypeOf(ctx.t).toEqualTypeOf<(s: string) => string>(); // ✅
+				expectTypeOf(ctx.text).toEqualTypeOf<string | undefined>();  // ✅
+				return next();
+			});
+	});
+
+	it("EventContextOf: global derive also visible", () => {
+		const methods = defineComposerMethods({
+			command<TThis extends ComposerLike<TThis>>(
+				this: TThis,
+				name: string,
+				handler: Middleware<MsgCtx & EventContextOf<TThis, "message">>,
+			): TThis {
+				return this.on("message", (ctx: any, next: Next) => {
+					if (ctx.text === `/${name}`) return handler(ctx, next);
+					return next();
+				});
+			},
+		});
+
+		const { Composer: EC2 } = createComposer<Base, Map, typeof methods>({
+			discriminator: (ctx) => ctx.updateType,
+			types: eventTypes<Map>(),
+			methods,
+		});
+
+		new EC2()
+			.derive(() => ({ user: { id: 1 } }))         // global
+			.derive("message", () => ({ t: (_: string) => _ })) // per-event
+			.command("start", (ctx, next) => {
+				expectTypeOf(ctx.user.id).toBeNumber();             // ✅ global
+				expectTypeOf(ctx.t).toEqualTypeOf<(s: string) => string>(); // ✅ per-event
+				return next();
+			});
+	});
+
+	it("EventContextOf: per-event derive from extended plugin visible in command", () => {
+		const methods = defineComposerMethods({
+			command<TThis extends ComposerLike<TThis>>(
+				this: TThis,
+				name: string,
+				handler: Middleware<MsgCtx & EventContextOf<TThis, "message">>,
+			): TThis {
+				return this.on("message", (ctx: any, next: Next) => {
+					if (ctx.text === `/${name}`) return handler(ctx, next);
+					return next();
+				});
+			},
+		});
+
+		const { Composer: EC2 } = createComposer<Base, Map, typeof methods>({
+			discriminator: (ctx) => ctx.updateType,
+			types: eventTypes<Map>(),
+			methods,
+		});
+
+		const plugin = new EC2({ name: "i18n" })
+			.derive("message", () => ({ t: (s: string) => s }))
+			.as("scoped");
+
+		// After extend, per-event derive from plugin is visible in command handler
+		new EC2()
+			.extend(plugin)
+			.command("start", (ctx, next) => {
+				expectTypeOf(ctx.t).toEqualTypeOf<(s: string) => string>(); // ✅
+				return next();
+			});
 	});
 });

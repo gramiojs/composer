@@ -734,6 +734,38 @@ bot.on("message", h).hears(/hi/, h2);  // chaining works — polymorphic `this` 
 
 **Chaining behavior:** `TMethods` is carried as a 7th generic on `EventComposer` and preserved through **all** method chains — both `this`-returning methods (`on`, `use`, `guard`, etc.) and generic-modifying methods (`derive`, `decorate`, `as`, `when`, `extend`). Custom methods can also call each other via `this` inside method bodies.
 
+**Context typing patterns for custom methods:**
+
+Three patterns are available depending on what context information the handler needs:
+
+| Pattern | Handler sees | Best for |
+|---|---|---|
+| `ContextOf<TThis>` | `TOut` (global derives) | Generic methods not tied to a specific event |
+| `EventContextOf<TThis, E>` | `TOut & TDerives[E]` (global + per-event derives) | Event-specific methods like `command`, `hears` |
+| `Patch` generic | `TOut & Patch` (caller declares extra types) | Methods where caller knows the context shape |
+
+`EventContextOf<TThis, E>` is the key utility when the method always routes to a specific event and must see per-event derives registered via `derive(event, handler)`. Without it, `derive("message", () => ({ t: i18n.t }))` would be invisible inside a `command` handler's type even though the runtime value is present:
+
+```typescript
+const methods = defineComposerMethods({
+  // ✅ EventContextOf — per-event derives visible in handler
+  command<TThis extends ComposerLike<TThis>>(
+    this: TThis,
+    name: string,
+    handler: Middleware<MsgCtx & EventContextOf<TThis, "message">>,
+  ): TThis {
+    return this.on("message", (ctx: any, next: Next) => {
+      if (ctx.text === `/${name}`) return handler(ctx, next);
+      return next();
+    });
+  },
+});
+
+new Composer()
+  .derive("message", () => ({ t: i18n.buildT("en") }))
+  .command("start", (ctx) => ctx.t("Hello")); // ✅ t is typed
+```
+
 ### `EventComposer` — returned by factory
 
 Extends the base `Composer` with `.on()`:

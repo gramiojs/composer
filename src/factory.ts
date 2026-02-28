@@ -327,6 +327,39 @@ export interface EventComposerConstructor<
 export type ContextOf<T> = T extends { "~": { Out: infer O } } ? O : never;
 
 /**
+ * Extracts the context type for a specific event from an EventComposer instance,
+ * combining global `TOut` (like `ContextOf`) **and** per-event `TDerives[E]`.
+ *
+ * Use this in custom event-specific methods (e.g. `command`, `hears`) instead of
+ * `ContextOf<T>` so that handlers registered via `derive(event, handler)` are
+ * visible in the handler's type:
+ *
+ * @example
+ * ```ts
+ * const methods = defineComposerMethods({
+ *   command<TThis extends ComposerLike<TThis>>(
+ *     this: TThis,
+ *     name: string,
+ *     handler: Middleware<MsgCtx & EventContextOf<TThis, "message">>,
+ *   ): TThis {
+ *     return this.on("message", (ctx, next) => {
+ *       if (ctx.text === `/${name}`) return handler(ctx, next);
+ *       return next();
+ *     });
+ *   },
+ * });
+ *
+ * new Composer()
+ *   .derive("message", () => ({ t: (s: string) => s }))
+ *   .command("start", (ctx) => ctx.t("Hi!")); // ✅ t is visible
+ * ```
+ */
+export type EventContextOf<T, E extends string> =
+	T extends { "~": { Out: infer O extends object; Derives: infer D extends Record<string, object> } }
+		? O & (E extends keyof D ? D[E] : {})
+		: never;
+
+/**
  * Helper to define custom composer methods with full TypeScript inference.
  *
  * TypeScript cannot infer generic method signatures when they're passed directly

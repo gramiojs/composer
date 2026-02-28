@@ -521,6 +521,63 @@ command<TThis extends ComposerLike<TThis>>(
 ): TThis
 ```
 
+#### `EventContextOf<T, E>` — extract context for a specific event (global + per-event derives)
+
+Like `ContextOf<T>`, but also includes per-event derives registered via `derive(event, handler)`.
+
+| | Includes |
+|---|---|
+| `ContextOf<TThis>` | `TOut` — global derives only |
+| `EventContextOf<TThis, "message">` | `TOut & TDerives["message"]` — global **and** per-event derives |
+
+**Why it matters:** when a custom method always routes to a specific event (e.g. `command` → `"message"`), its handler should see per-event derives too. With `ContextOf` alone, a `derive("message", ...)` plugin's types are invisible inside the handler even though the value is there at runtime.
+
+```ts
+import { createComposer, defineComposerMethods, eventTypes } from "@gramio/composer";
+import type { ComposerLike, EventContextOf, Middleware } from "@gramio/composer";
+
+const methods = defineComposerMethods({
+  command<TThis extends ComposerLike<TThis>>(
+    this: TThis,
+    name: string,
+    //                  ↓ EventContextOf instead of ContextOf
+    handler: Middleware<MessageCtx & EventContextOf<TThis, "message">>,
+  ): TThis {
+    return this.on("message", (ctx: any, next: Next) => {
+      if (ctx.text === `/${name}`) return handler(ctx, next);
+      return next();
+    });
+  },
+});
+
+const { Composer } = createComposer<BaseCtx, { message: MessageCtx }, typeof methods>({
+  discriminator: (ctx) => ctx.updateType,
+  methods,
+});
+
+// Per-event plugin that adds `t` only for message events:
+const i18nPlugin = new Composer({ name: "i18n" })
+  .derive("message", (ctx) => ({
+    t: i18n.buildT(ctx.from?.languageCode ?? "en"),
+  }))
+  .as("scoped");
+
+new Composer()
+  .extend(i18nPlugin)
+  .command("start", (ctx, next) => {
+    ctx.t("Hello");   // ✅ typed — EventContextOf sees TDerives["message"]
+    ctx.text;         // ✅ string | undefined — from MessageCtx
+    return next();
+  })
+  .on("message", (ctx, next) => {
+    ctx.t("Hi");      // ✅ also works here via ResolveEventCtx
+    return next();
+  });
+```
+
+> [!NOTE]
+> If the derive is registered globally (`.derive(() => ...)` without an event name), both `ContextOf` and `EventContextOf` will see it. Per-event derives (`derive("message", ...)`) are only visible through `EventContextOf` in custom method signatures, or directly inside `.on("message", ...)` handlers.
+
 #### `ComposerLike<T>` — minimal structural type for `this` constraints
 
 A minimal interface `{ on(event: any, handler: any): T }` used as an F-bounded constraint on `TThis`. Makes `this.on(...)` fully typed and return `TThis` without casts.
