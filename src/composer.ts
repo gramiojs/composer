@@ -508,6 +508,32 @@ export class Composer<
 		});
 	}
 
+	/**
+	 * Returns a Set of all event names registered via `.on()` and event-specific `.derive()`.
+	 *
+	 * Useful for introspecting which update types the middleware chain handles,
+	 * e.g. to auto-derive `allowed_updates` for the Telegram Bot API.
+	 *
+	 * @example
+	 * ```typescript
+	 * composer.on("message", handler);
+	 * composer.on(["callback_query", "inline_query"], handler);
+	 * composer.registeredEvents(); // Set {"message", "callback_query", "inline_query"}
+	 * ```
+	 */
+	registeredEvents(): Set<string> {
+		const events = new Set<string>();
+		for (const mw of this["~"].middlewares) {
+			if ((mw.type === "on" || mw.type === "derive") && mw.name) {
+				for (const part of mw.name.split("|")) {
+					const eventPart = part.includes(":") ? part.split(":")[0] : part;
+					if (eventPart) events.add(eventPart);
+				}
+			}
+		}
+		return events;
+	}
+
 	trace(handler: TraceHandler): this {
 		this["~"].tracer = handler;
 		this.invalidate();

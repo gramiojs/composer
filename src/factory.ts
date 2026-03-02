@@ -235,6 +235,7 @@ export interface EventComposer<
 	): EventComposer<TBase, TEventMap, TIn, TOut, TExposed, TDerives, TMethods, TMacros & TDefs> & TMethods;
 
 	inspect(): MiddlewareInfo[];
+	registeredEvents(): Set<string>;
 	trace(handler: TraceHandler): this;
 
 	compose(): ComposedMiddleware<TIn>;
