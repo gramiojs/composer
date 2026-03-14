@@ -166,9 +166,16 @@ export class Composer<
 	}
 
 	guard<S extends TOut>(
+		predicate: (context: TOut) => context is S,
+	): Composer<TIn, S, TExposed>;
+	guard(
+		predicate: (context: TOut) => boolean | Promise<boolean>,
+		...middleware: Middleware<TOut>[]
+	): Composer<TIn, TOut, TExposed>;
+	guard<S extends TOut>(
 		predicate: ((context: TOut) => context is S) | ((context: TOut) => boolean | Promise<boolean>),
 		...middleware: Middleware<any>[]
-	): Composer<TIn, TOut, TExposed> {
+	): Composer<TIn, TOut | S, TExposed> {
 		const isGate = middleware.length === 0;
 		const predicateName = predicate.name || undefined;
 

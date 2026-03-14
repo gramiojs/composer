@@ -570,6 +570,28 @@ describe("guard() type narrowing", () => {
 		});
 	});
 
+	it("derive() then guard() — ctx inside predicate has derived types (not any)", () => {
+		new Composer<Base>()
+			.derive(async () => ({ isAdmin: true }))
+			.guard((ctx) => {
+				expectTypeOf(ctx.isAdmin).toBeBoolean();
+				return true;
+			});
+	});
+
+	it("extend() with .as('scoped') then guard() — ctx inside predicate has derived types", () => {
+		const withAuth = new Composer<Base>()
+			.derive(async () => ({ isAdmin: true }))
+			.as("scoped");
+
+		new Composer<Base>()
+			.extend(withAuth)
+			.guard((ctx) => {
+				expectTypeOf(ctx.isAdmin).toBeBoolean();
+				return true;
+			});
+	});
+
 	it("guard + derive + .on() — all combine", () => {
 		new EC()
 			.derive(() => ({ ts: 0 }))
